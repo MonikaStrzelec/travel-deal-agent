@@ -257,6 +257,12 @@
     "max_backoff_exponent": 5,
     "idle_poll_seconds": 30
   },
+  "active_hours": {
+    "enabled": false,
+    "timezone": "Europe/Warsaw",
+    "active_from": "07:00",
+    "active_until": "23:30"
+  },
   "providers": {
     "mock": {
       "enabled": false,

@@ -95,6 +95,23 @@ class SchedulerConfig(TypedDict):
     idle_poll_seconds: int
 
 
+class ActiveHoursConfig(TypedDict):
+    """A configurable local time-of-day window in which provider scans may run.
+
+    `active_from` is inclusive and `active_until` is exclusive, matching the
+    inclusive-lower/exclusive-upper convention used by price bands elsewhere
+    in this project. Both are "HH:MM" 24-hour local times in `timezone`. A
+    window where `active_from` is greater than `active_until` wraps past
+    midnight (e.g. "22:00"-"06:00"). Setting `enabled` to false disables the
+    gate entirely (scans are always allowed), without changing the code.
+    """
+
+    enabled: bool
+    timezone: str
+    active_from: str
+    active_until: str
+
+
 @with_config(ConfigDict(extra="forbid"))
 class AppConfig(TypedDict):
     filters: FilterConfig
@@ -102,4 +119,5 @@ class AppConfig(TypedDict):
     providers: dict[str, ProviderConfig]
     external_verification: ExternalConfig
     scheduler: SchedulerConfig
+    active_hours: ActiveHoursConfig
     price_drop_pln: str
