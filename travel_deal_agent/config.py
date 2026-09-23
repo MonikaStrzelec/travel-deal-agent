@@ -10,8 +10,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
 
+from .active_hours import validate_active_hours
 from .boards import BOARD_ORDER, CANONICAL_BOARDS
 from .config_types import (
+    ActiveHoursConfig,
     AppConfig,
     ExternalConfig,
     FilterConfig,
@@ -36,6 +38,7 @@ class Settings:
     log_level: str
     external_verification: ExternalConfig
     scheduler: SchedulerConfig
+    active_hours: ActiveHoursConfig
 
 
 @dataclass(frozen=True)
@@ -222,6 +225,7 @@ def validate_options(raw: AppConfig) -> None:
         or not 0 <= raw["scheduler"]["max_backoff_exponent"] <= 20
     ):
         raise ValueError("Invalid scheduler timing settings")
+    validate_active_hours(raw["active_hours"])
 
 
 def load_settings() -> Settings:
@@ -274,4 +278,5 @@ def load_settings() -> Settings:
         level,
         raw["external_verification"],
         raw["scheduler"],
+        raw["active_hours"],
     )

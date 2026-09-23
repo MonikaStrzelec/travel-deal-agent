@@ -4,8 +4,9 @@ import logging
 import random
 import time
 from collections.abc import Callable, Sequence
-from datetime import date
+from datetime import date, datetime, timezone
 
+from .active_hours import is_within_active_hours
 from .config import Settings
 from .config_types import ProviderConfig
 from .models import Offer
@@ -51,21 +52,29 @@ class Scheduler:
             raise ValueError(f"No implementation for enabled providers: {sorted(unknown)}")
 
     def run_once(self, force: bool = False) -> list[Offer]:
-        """Poll due sources and return ranked matches from this check only."""
+        """Poll due sources and return ranked matches from this check only.
+
+        Outside the configured active-hours window, provider scans are
+        skipped entirely (force bypasses this, like it bypasses due times).
+        Already-pending notifications still get a delivery attempt below.
+        """
         started = time.monotonic()
         logger.info("Search started")
         accepted = []
-        for name, config in self.settings.providers.items():
-            if not config["enabled"]:
-                continue
-            state = self.store.run_state(name)
-            if not force and state and self.clock() < state["next_run"]:
-                continue
-            offers = self._fetch(name, config)
-            if offers is not None:
-                matches = self.pipeline.filter_batch(name, offers)
-                accepted.extend(matches)
-                logger.info("Provider %s matched %s offers", name, len(matches))
+        if force or self._within_active_hours():
+            for name, config in self.settings.providers.items():
+                if not config["enabled"]:
+                    continue
+                state = self.store.run_state(name)
+                if not force and state and self.clock() < state["next_run"]:
+                    continue
+                offers = self._fetch(name, config)
+                if offers is not None:
+                    matches = self.pipeline.filter_batch(name, offers)
+                    accepted.extend(matches)
+                    logger.info("Provider %s matched %s offers", name, len(matches))
+        else:
+            logger.info("Outside active hours; skipping provider scans")
         result = self.pipeline.finalize(accepted)
         deliver_pending(self.store, self.notifier)
         logger.info(
@@ -95,6 +104,11 @@ class Scheduler:
         self.store.schedule(name, self.clock() + self._next_delay(config), 0)
         return offers
 
+    def _within_active_hours(self) -> bool:
+        """Convert the injected epoch clock (UTC) into the configured local window."""
+        moment = datetime.fromtimestamp(self.clock(), tz=timezone.utc)
+        return is_within_active_hours(self.settings.active_hours, moment)
+
     def _next_delay(self, config: ProviderConfig) -> float:
         """Randomize only the steady-state cadence; backoff stays deterministic."""
         minimum = config.get("interval_min_seconds")
@@ -107,10 +121,19 @@ class Scheduler:
         """Poll continuously until interrupted; due times survive restarts."""
         while True:
             self.run_once()
-            due = []
-            for name, config in self.settings.providers.items():
-                state = self.store.run_state(name)
-                if config["enabled"] and state is not None:
-                    due.append(state["next_run"])
             idle = self.settings.scheduler["idle_poll_seconds"]
-            self.sleep(max(1, min(idle, min(due) - self.clock())) if due else idle)
+            if self._within_active_hours():
+                due = []
+                for name, config in self.settings.providers.items():
+                    state = self.store.run_state(name)
+                    if config["enabled"] and state is not None:
+                        due.append(state["next_run"])
+                wait = min(idle, min(due) - self.clock()) if due else idle
+            else:
+                # Providers were never fetched this cycle, so their due times
+                # are frozen (not necessarily in the future); a plain idle
+                # poll avoids both a busy loop and any dependency on those
+                # stale due times. The next active-hours entry is picked up
+                # by the run_once() gate above, at worst one idle interval late.
+                wait = idle
+            self.sleep(max(1, wait))

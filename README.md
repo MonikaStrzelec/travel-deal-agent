@@ -38,6 +38,7 @@ flowchart LR
 | `ranking.py`, `presentation.py` | Weighted comparison and rating display |
 | `pipeline.py` | Filter, shortlist, enrich and persist observations |
 | `scheduler.py` | Per-source due times, retry backoff and injected clocks |
+| `active_hours.py` | Pure configurable local time-of-day window gating provider scans |
 | `alerts.py` | Pure new-offer and cumulative price-drop decisions |
 | `storage.py` | SQLite snapshots, history, schedules and transactional outbox |
 | `notifications.py` | Delivery interface, Telegram Bot API notifier and local logging implementation |
@@ -59,6 +60,9 @@ flowchart LR
 ## Technologies
 
 Python 3.10+, SQLite, dataclasses, Pydantic, python-dotenv, Playwright, pytest, Ruff and mypy.
+Active hours use the standard-library `zoneinfo` module; `tzdata` is an additional
+dependency only on Windows, which (unlike most Linux distributions) has no built-in IANA
+time zone database for `zoneinfo` to read.
 The GitHub Actions configuration runs checks on Windows and Linux with Python 3.10/3.14.
 
 ## Quick start
@@ -150,6 +154,34 @@ protections that this scheduler-level range never loosens; a source that needs a
 cautious cadence can simply configure a larger range. The mock's `interval_seconds`
 defaults to 600, which is not a recommended interval for real websites. Scheduler idle
 polling is configurable too.
+
+### Active hours
+
+`active_hours` restricts provider scans (in both a single check and `--watch`) to a
+configurable local time-of-day window, so the agent can be left running continuously
+without polling sources while nobody can act on an alert:
+
+```json
+"active_hours": {
+  "enabled": true,
+  "timezone": "Europe/Warsaw",
+  "active_from": "07:00",
+  "active_until": "23:30"
+}
+```
+
+`active_from` is inclusive and `active_until` is exclusive, matching the price-band
+convention used elsewhere in this configuration. A window may wrap past midnight (for
+example `"22:00"`/`"06:00"`). `timezone` accepts any IANA name resolvable by the
+standard-library `zoneinfo` module. Setting `enabled` to `false` disables the gate
+(scans run at any hour), without a code change. `--force` bypasses the gate for one
+manual check, exactly like it already bypasses each provider's due time.
+
+Outside active hours, `run_forever` keeps running and waiting (`scheduler.idle_poll_seconds`
+between checks) instead of scanning; it never sends a notification about being idle. Each
+provider's own persisted due time (`interval_seconds`, or the randomized range above) is
+untouched while scans are skipped, so entering active hours triggers exactly one normal
+check per due provider, not a burst covering every interval missed overnight.
 
 ## Example flow
 
