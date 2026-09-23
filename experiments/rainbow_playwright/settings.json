@@ -1,0 +1,8 @@
+{
+  "departure_airports": ["LCJ", "KTW", "WAW", "WMI", "WRO"],
+  "duration_days": {"min": 7, "max": 9},
+  "meal_labels": ["All inclusive", "3 posiłki", "2 posiłki"],
+  "max_price_per_person_pln": 1500,
+  "min_customer_rating": 5.0,
+  "expected_sort": "cena-asc"
+}

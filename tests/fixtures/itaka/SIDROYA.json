@@ -1,0 +1,396 @@
+{
+  "listing": {
+    "isConfirmed": false,
+    "isRecommended": false,
+    "isBestseller": true,
+    "isPromoted": false,
+    "supplier": "itaka",
+    "supplierObjectId": "SIDROYA",
+    "rateType": "holidays",
+    "brand": "VITX",
+    "currency": "PLN",
+    "participantGroups": [
+      {
+        "price": 929800,
+        "rateId": "CgVJdGFrYRIEVklUWBoDUExOIgdTSURST1lBKAQ6BEwyNTVCBgiA8pzVBkoGCIDnwdUGUAJiBQoDV0FXagUKA1NJRHIDCgEyegUKA1NJRIIBBQoDV0FXigEDCgEykgEGCIDynNUGmgEGCIDnwdUGogEFCgNKSDKqAQMKAUHiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+        "priceCatalogCode": "L255",
+        "omnibusFirstAdultPrice": 494900,
+        "promotions": [
+          {
+            "value": "LastMinute",
+            "title": "Last Minute"
+          },
+          {
+            "value": "lato",
+            "title": "LATO 26"
+          }
+        ],
+        "participants": [
+          {
+            "price": 464900,
+            "baseCatalogPrice": 814900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          },
+          {
+            "price": 464900,
+            "baseCatalogPrice": 814900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "duration": {
+      "days": 8
+    },
+    "segments": [
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-09-14",
+        "beginTime": "15:25:00+02:00",
+        "endDate": "2026-09-14",
+        "endTime": "20:00:00-01:00",
+        "departure": {
+          "title": "Warszawa-Okęcie"
+        },
+        "destination": {
+          "title": "Sal"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      },
+      {
+        "isExternal": false,
+        "type": "hotel",
+        "beginDate": "2026-09-14",
+        "endDate": "2026-09-21",
+        "participantGroups": [
+          {
+            "objectType": null,
+            "meal": {
+              "id": "A",
+              "title": "All inclusive 24h"
+            },
+            "mealGroup": {
+              "id": "A",
+              "title": "All inclusive"
+            },
+            "supplierMeal": {
+              "id": "A",
+              "title": "A"
+            },
+            "room": {
+              "id": "JH2",
+              "title": "Junior Suite 2 os."
+            },
+            "baseRoomCode": "JH4"
+          }
+        ],
+        "content": {
+          "title": "Hotel Royal Horizon Ponta Sino",
+          "hotelRating": 50,
+          "reviews": {
+            "customersRating": 5.5,
+            "reviewsNumber": 1534
+          },
+          "geographicalIdentifiers": [
+            {
+              "id": "wyspy-zielonego-przyladka",
+              "title": "Wyspy Zielonego Przylądka",
+              "type": "country",
+              "parentId": null,
+              "startingDestination": true
+            },
+            {
+              "id": "sal",
+              "title": "Sal",
+              "type": "province",
+              "parentId": "wyspy-zielonego-przyladka",
+              "startingDestination": false
+            }
+          ]
+        }
+      },
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-09-21",
+        "beginTime": "21:20:00-01:00",
+        "endDate": "2026-09-22",
+        "endTime": "07:35:00+02:00",
+        "departure": {
+          "title": "Sal"
+        },
+        "destination": {
+          "title": "Warszawa-Okęcie"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      }
+    ]
+  },
+  "variant": {
+    "id": "CgVJdGFrYRIEVklUWBoDUExOIgdTSURST1lBKAQ6BEwyNTVCBgiA8pzVBkoGCIDnwdUGUAJiBQoDV0FXagUKA1NJRHIDCgEyegUKA1NJRIIBBQoDV0FXigEDCgEykgEGCIDynNUGmgEGCIDnwdUGogEFCgNKSDKqAQMKAUHiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+    "supplierObjectId": "SIDROYA",
+    "rateType": "holidays",
+    "saleStatus": "available",
+    "beginDate": "2026-09-14",
+    "endDate": "2026-09-21",
+    "duration": {
+      "days": 8,
+      "nights": 7
+    },
+    "meal": {
+      "id": "A",
+      "title": "All inclusive 24h"
+    },
+    "room": {
+      "id": "JH2",
+      "title": "Junior Suite 2 os."
+    },
+    "price": {
+      "actualPrice": {
+        "amount": 9298,
+        "currency": "PLN"
+      },
+      "actualWithAdditionalPayments": {
+        "amount": 9358,
+        "currency": "PLN"
+      },
+      "catalogPrice": {
+        "amount": 16298,
+        "currency": "PLN"
+      },
+      "additionalPayments": [
+        {
+          "type": "TFG",
+          "amount": {
+            "amount": 30,
+            "currency": "PLN"
+          }
+        },
+        {
+          "type": "TFP",
+          "amount": {
+            "amount": 30,
+            "currency": "PLN"
+          }
+        }
+      ],
+      "omnibusFirstAdultPrice": {
+        "amount": 4949,
+        "currency": "PLN"
+      },
+      "priceCatalogCode": "L255",
+      "prepayment": null,
+      "participants": [
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 8149,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 4649,
+            "currency": "PLN"
+          },
+          "omnibusPrice": {
+            "amount": 4949,
+            "currency": "PLN"
+          },
+          "ageOnDateOfReturn": 30
+        },
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 8149,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 4649,
+            "currency": "PLN"
+          },
+          "omnibusPrice": {
+            "amount": 4949,
+            "currency": "PLN"
+          },
+          "ageOnDateOfReturn": 30
+        }
+      ]
+    },
+    "participants": {
+      "adults": 2,
+      "children": 0,
+      "infants": 0,
+      "details": [
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        },
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        }
+      ]
+    },
+    "transport": {
+      "outbound": {
+        "type": "flight",
+        "id": "WAW",
+        "title": "Warszawa-Okęcie",
+        "hireType": "charter",
+        "beginDateTime": "2026-09-14T15:25:00+02:00",
+        "isDirect": true
+      },
+      "inbound": {
+        "type": "flight",
+        "id": "SID",
+        "title": "Sal",
+        "hireType": "charter",
+        "beginDateTime": "2026-09-21T21:20:00-01:00",
+        "isDirect": true
+      }
+    }
+  },
+  "summary": {
+    "rooms": {
+      "ids": [
+        "JH2"
+      ],
+      "types": [
+        "Junior Suite 2 os."
+      ],
+      "prices": [
+        4649
+      ],
+      "offerIds": [
+        "CgVJdGFrYRIEVklUWBoDUExOIgdTSURST1lBKAQ6BEwyNTVCBgiA8pzVBkoGCIDnwdUGUAJiBQoDV0FXagUKA1NJRHIDCgEyegUKA1NJRIIBBQoDV0FXigEDCgEykgEGCIDynNUGmgEGCIDnwdUGogEFCgNKSDKqAQMKAUHiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU="
+      ]
+    },
+    "roomCount": 1,
+    "totalPrice": 9358,
+    "transportDetails": {
+      "outbound": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Warszawa-Okęcie",
+            "code": "WAW"
+          },
+          "dateTime": "2026-09-14T15:25:00",
+          "carrierName": "Smartwings",
+          "carrierFlightNumber": "TVP7604",
+          "carrierCode": "TVP"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Sal",
+            "code": "SID"
+          },
+          "dateTime": "2026-09-14T20:00:00",
+          "carrierName": "Smartwings",
+          "carrierFlightNumber": "TVP7604",
+          "carrierCode": "TVP"
+        }
+      },
+      "return": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Sal",
+            "code": "SID"
+          },
+          "dateTime": "2026-09-21T21:20:00",
+          "carrierName": "Smartwings",
+          "carrierFlightNumber": "TVP7605",
+          "carrierCode": "TVP"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Warszawa-Okęcie",
+            "code": "WAW"
+          },
+          "dateTime": "2026-09-22T07:35:00",
+          "carrierName": "Smartwings",
+          "carrierFlightNumber": "TVP7605",
+          "carrierCode": "TVP"
+        }
+      }
+    }
+  },
+  "local_information": [
+    {
+      "title": "Obowiązkowy podatek turystyczny",
+      "descriptionShort": "ok. 2,5 EUR/doba pobierany od osób powyżej 16. roku życia, płatny na miejscu w hotelu",
+      "descriptionLong": null
+    },
+    {
+      "title": "Niezbędne dokumenty ",
+      "descriptionShort": "<style>\n  .info {\n      position: relative;\n      display: inline-block;\n  }\n\n  .info > img {\n      height: 1rem;\n  transform: translateY(0.1rem);\n\n  }\n\n  .info-popup{\n      background: #2B2B33;\n      color: white;\n      font-size: 14px;\n      line-height: 20px;\n      padding: 10px;\n      display: none;\n      position: absolute;\n      border-radius: 8px;\n      text-align: center;\n      width: 268px;\n      height: 100px;\n      transform: translate(-121.5px, 10px);\n      z-index: 1;\n  }\n\n  .info-popup::after{\n      content: '';\n      display: block;\n      width: 1rem;\n      height: 1rem;\n      position: absolute;\n      top: -.5rem;\n      background: #2B2B33;\n      left: 45%;\n      transform: rotateZ(45deg);\n      \n  }\n\n  .info:hover .info-popup {\n      display: block;\n  }\n\n  .listStyle {\n    list-style-type: disc !important;\n  } \n\n\n\n  @media (max-width:530px) {\n      .info-popup {\n          transform: translate(-56.5px, 10px);\n          width: unset;\n          height: unset;\n      }\n\n      \n  }\n</style>\n\n    <ul class=\"listStyle\">\n     <li class=\"listStyle\">paszport (także dla dziecka) ważny minimum 6 miesięcy od daty powrotu do Polski </li>\n    <strong>Obowiązkowa opłata wjazdowa na Sal oraz rejestracja wjazdu:</strong>\n    <ul class=\"listStyle\">\n      <li class=\"listStyle\">w przypadku rezerwacji założonych do 3 dni przed wylotem opłata 200 PLN/os. wliczona jest w cenę rezerwacji, rejestracja wjazdu przeprowadzana jest przez lokalnego kontrahenta na podstawie danych paszportowych podanych w rezerwacji </li>\n           <li class=\"listStyle\">w przypadku rezerwacji założonych na 3 dni i mniej przed terminem realizacji imprezy oraz w przypadku rezerwacji, w których nie zostały uzupełnione dane paszportowe:  należy zarejestrować wjazd samodzielnie na stronie <a target='_blank' href=\"https://www.ease.gov.cv/\">www.ease.gov.cv</a> i dokonać płatności online jeszcze przed wylotem oraz zabrać ze sobą potwierdzenie wpłaty lub dokonać płatności na lotnisku na Sal po przylocie ok. 30,9 EUR/os. (w przypadku płatności po wylądowaniu rejestracja wjazdu nie jest wymagana) </li>\n  </ul>\n<span style=\"font-size: 12px; margin-top: 0.9rem; position: relative; padding-right: 30px;\">Przedstawione warunki wjazdowe dotyczą obywateli Polski.\n  <span class=\"info\">\n      <img src=\"https://s.content4travel.com/itkpl/sun_cloud_1_572d3f8849.svg?updated_at=2023-03-20T14:53:08.600Z\" alt=\"info\">\n          <span class=\"info-popup\">Obywatelom innych państw zaleca się kontakt z właściwym konsulatem w celu sprawdzenia obowiązujących ich przepisów wjazdowych</span>\n  </span>\n</span>",
+      "descriptionLong": ""
+    }
+  ],
+  "legacy_offer_id": "49ea790077c2e003ff19582243eec0a07dee57579f6be87030fea8ecb3518ea1"
+}

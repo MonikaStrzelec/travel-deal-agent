@@ -1,0 +1,391 @@
+{
+  "listing": {
+    "isConfirmed": false,
+    "isRecommended": false,
+    "isBestseller": true,
+    "isPromoted": false,
+    "supplier": "itaka",
+    "supplierObjectId": "FUERIOC",
+    "rateType": "holidays",
+    "brand": "VITX",
+    "currency": "PLN",
+    "participantGroups": [
+      {
+        "price": 699800,
+        "rateId": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTRCBgiA26zVBkoGCIDnwdUGUAJiBQoDS1RXagUKA0ZVRXIDCgEyegUKA0ZVRYIBBQoDS1RXigEDCgExkgEGCIDbrNUGmgEGCIDnwdUGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+        "priceCatalogCode": "L254",
+        "omnibusFirstAdultPrice": 509900,
+        "promotions": [
+          {
+            "value": "LastMinute",
+            "title": "Last Minute"
+          },
+          {
+            "value": "lato",
+            "title": "LATO 26"
+          }
+        ],
+        "participants": [
+          {
+            "price": 349900,
+            "baseCatalogPrice": 509900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          },
+          {
+            "price": 349900,
+            "baseCatalogPrice": 509900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "duration": {
+      "days": 5
+    },
+    "segments": [
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-09-17",
+        "beginTime": "06:40:00+02:00",
+        "endDate": "2026-09-17",
+        "endTime": "10:55:00+01:00",
+        "departure": {
+          "title": "Katowice"
+        },
+        "destination": {
+          "title": "Puerto del Rosario"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      },
+      {
+        "isExternal": false,
+        "type": "hotel",
+        "beginDate": "2026-09-17",
+        "endDate": "2026-09-21",
+        "participantGroups": [
+          {
+            "objectType": null,
+            "meal": {
+              "id": "H",
+              "title": "2 posiłki"
+            },
+            "mealGroup": {
+              "id": "H",
+              "title": "2 posiłki"
+            },
+            "supplierMeal": {
+              "id": "H",
+              "title": "H"
+            },
+            "room": {
+              "id": "DBL",
+              "title": "Pokój 2 os."
+            },
+            "baseRoomCode": null
+          }
+        ],
+        "content": {
+          "title": "Hotel R2 Rio Calma",
+          "hotelRating": 40,
+          "reviews": {
+            "customersRating": 5.3,
+            "reviewsNumber": 4915
+          },
+          "geographicalIdentifiers": [
+            {
+              "id": "wyspy-kanaryjskie",
+              "title": "Wyspy Kanaryjskie",
+              "type": "country",
+              "parentId": null,
+              "startingDestination": true
+            },
+            {
+              "id": "fuerteventura",
+              "title": "Fuerteventura",
+              "type": "province",
+              "parentId": "wyspy-kanaryjskie",
+              "startingDestination": false
+            }
+          ]
+        }
+      },
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-09-21",
+        "beginTime": "12:00:00+01:00",
+        "endDate": "2026-09-21",
+        "endTime": "17:55:00+02:00",
+        "departure": {
+          "title": "Puerto del Rosario"
+        },
+        "destination": {
+          "title": "Katowice"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      }
+    ]
+  },
+  "variant": {
+    "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTRCBgiA26zVBkoGCIDnwdUGUAJiBQoDS1RXagUKA0ZVRXIDCgEyegUKA0ZVRYIBBQoDS1RXigEDCgExkgEGCIDbrNUGmgEGCIDnwdUGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+    "supplierObjectId": "FUERIOC",
+    "rateType": "holidays",
+    "saleStatus": "available",
+    "beginDate": "2026-09-17",
+    "endDate": "2026-09-21",
+    "duration": {
+      "days": 5,
+      "nights": 4
+    },
+    "meal": {
+      "id": "H",
+      "title": "2 posiłki"
+    },
+    "room": {
+      "id": "DBL",
+      "title": "Pokój 2 os."
+    },
+    "price": {
+      "actualPrice": {
+        "amount": 6998,
+        "currency": "PLN"
+      },
+      "actualWithAdditionalPayments": {
+        "amount": 7058,
+        "currency": "PLN"
+      },
+      "catalogPrice": {
+        "amount": 10198,
+        "currency": "PLN"
+      },
+      "additionalPayments": [
+        {
+          "type": "TFG",
+          "amount": {
+            "amount": 30,
+            "currency": "PLN"
+          }
+        },
+        {
+          "type": "TFP",
+          "amount": {
+            "amount": 30,
+            "currency": "PLN"
+          }
+        }
+      ],
+      "omnibusFirstAdultPrice": {
+        "amount": 5099,
+        "currency": "PLN"
+      },
+      "priceCatalogCode": "L254",
+      "prepayment": null,
+      "participants": [
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 5099,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 3499,
+            "currency": "PLN"
+          },
+          "omnibusPrice": {
+            "amount": 5099,
+            "currency": "PLN"
+          },
+          "ageOnDateOfReturn": 30
+        },
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 5099,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 3499,
+            "currency": "PLN"
+          },
+          "omnibusPrice": {
+            "amount": 5099,
+            "currency": "PLN"
+          },
+          "ageOnDateOfReturn": 30
+        }
+      ]
+    },
+    "participants": {
+      "adults": 2,
+      "children": 0,
+      "infants": 0,
+      "details": [
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        },
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        }
+      ]
+    },
+    "transport": {
+      "outbound": {
+        "type": "flight",
+        "id": "KTW",
+        "title": "Katowice",
+        "hireType": "charter",
+        "beginDateTime": "2026-09-17T06:40:00+02:00",
+        "isDirect": true
+      },
+      "inbound": {
+        "type": "flight",
+        "id": "FUE",
+        "title": "Puerto del Rosario",
+        "hireType": "charter",
+        "beginDateTime": "2026-09-21T12:00:00+01:00",
+        "isDirect": true
+      }
+    }
+  },
+  "summary": {
+    "rooms": {
+      "ids": [
+        "DBL"
+      ],
+      "types": [
+        "Pokój 2 os."
+      ],
+      "prices": [
+        3499
+      ],
+      "offerIds": [
+        "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTRCBgiA26zVBkoGCIDnwdUGUAJiBQoDS1RXagUKA0ZVRXIDCgEyegUKA0ZVRYIBBQoDS1RXigEDCgExkgEGCIDbrNUGmgEGCIDnwdUGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU="
+      ]
+    },
+    "roomCount": 1,
+    "totalPrice": 7058,
+    "transportDetails": {
+      "outbound": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Katowice",
+            "code": "KTW"
+          },
+          "dateTime": "2026-09-17T06:40:00",
+          "carrierName": "Electra Airways",
+          "carrierFlightNumber": "AMQ448",
+          "carrierCode": "AMQ"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Puerto del Rosario",
+            "code": "FUE"
+          },
+          "dateTime": "2026-09-17T10:55:00",
+          "carrierName": "Electra Airways",
+          "carrierFlightNumber": "AMQ448",
+          "carrierCode": "AMQ"
+        }
+      },
+      "return": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Puerto del Rosario",
+            "code": "FUE"
+          },
+          "dateTime": "2026-09-21T12:00:00",
+          "carrierName": "Ryanair Sun",
+          "carrierFlightNumber": "RR5006",
+          "carrierCode": "RR"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Katowice",
+            "code": "KTW"
+          },
+          "dateTime": "2026-09-21T17:55:00",
+          "carrierName": "Ryanair Sun",
+          "carrierFlightNumber": "RR5006",
+          "carrierCode": "RR"
+        }
+      }
+    }
+  },
+  "local_information": [
+    {
+      "title": "Niezbędne dokumenty ",
+      "descriptionShort": "<style>\n    .info {\n        position: relative;\n        display: inline-block;\n    }\n\n    .info > img {\n        height: 1rem;\n        transform: translateY(0.1rem);\n\n    }\n\n    .info-popup{\n        background: #2B2B33;\n        color: white;\n        font-size: 14px;\n        line-height: 20px;\n        padding: 10px;\n        display: none;\n        position: absolute;\n        border-radius: 8px;\n        text-align: center;\n        width: 268px;\n        height: 100px;\n        transform: translate(-121.5px, 10px);\n        z-index: 1;\n    }\n\n    .info-popup::after{\n        content: '';\n        display: block;\n        width: 1rem;\n        height: 1rem;\n        position: absolute;\n        top: -.5rem;\n        background: #2B2B33;\n        left: 45%;\n        transform: rotateZ(45deg);\n        \n    }\n\n    .info:hover .info-popup {\n        display: block;\n    }\n\n    @media (max-width:530px) {\n        .info-popup {\n            transform: translate(-56.5px, 10px);\n            width: unset;\n            height: unset;\n        }\n    }\n</style>\nważny dowód osobisty lub paszport (także dla dziecka)<br>\n<span style=\"font-size: 12px; margin-top: 0.9rem; position: relative; padding-right: 30px;\">Przedstawione warunki wjazdowe dotyczą obywateli Polski.\n    <span class=\"info\">\n        <img src=\"https://s.content4travel.com/itkpl/sun_cloud_1_572d3f8849.svg?updated_at=2023-03-20T14:53:08.600Z\" alt=\"info\">\n            <span class=\"info-popup\">Obywatelom innych państw zaleca się kontakt z właściwym konsulatem w celu sprawdzenia obowiązujących ich przepisów wjazdowych</span>\n    </span>\n</span>",
+      "descriptionLong": null
+    }
+  ],
+  "legacy_offer_id": "6f2614da43a5f9ec4ffca62be5f5867c28655c7cae005a126a9bdf0f6eb83703"
+}

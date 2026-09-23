@@ -1,0 +1,391 @@
+{
+  "listing": {
+    "isConfirmed": false,
+    "isRecommended": false,
+    "isBestseller": true,
+    "isPromoted": false,
+    "supplier": "itaka",
+    "supplierObjectId": "RMFTULR",
+    "rateType": "holidays",
+    "brand": "VITX",
+    "currency": "PLN",
+    "participantGroups": [
+      {
+        "price": 579800,
+        "rateId": "CgVJdGFrYRIEVklUWBoDUExOIgdSTUZUVUxSKAQ6BEwyNTNCBgiA89bVBkoGCIDo+9UGUAJiBQoDS1RXagUKA1JNRnIDCgE3egUKA1JNRoIBBQoDS1RXigEDCgE3kgEGCIDz1tUGmgEGCIDo+9UGogEFCgNESFOqAQMKAUHiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+        "priceCatalogCode": "L253",
+        "omnibusFirstAdultPrice": 299900,
+        "promotions": [
+          {
+            "value": "LastMinute",
+            "title": "Last Minute"
+          },
+          {
+            "value": "lato",
+            "title": "LATO 26"
+          }
+        ],
+        "participants": [
+          {
+            "price": 289900,
+            "baseCatalogPrice": 424900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          },
+          {
+            "price": 289900,
+            "baseCatalogPrice": 424900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "duration": {
+      "days": 8
+    },
+    "segments": [
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-09-25",
+        "beginTime": "08:30:00+02:00",
+        "endDate": "2026-09-25",
+        "endTime": "13:40:00+03:00",
+        "departure": {
+          "title": "Katowice"
+        },
+        "destination": {
+          "title": "Marsa Alam"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      },
+      {
+        "isExternal": false,
+        "type": "hotel",
+        "beginDate": "2026-09-25",
+        "endDate": "2026-10-02",
+        "participantGroups": [
+          {
+            "objectType": null,
+            "meal": {
+              "id": "A",
+              "title": "All inclusive"
+            },
+            "mealGroup": {
+              "id": "A",
+              "title": "All inclusive"
+            },
+            "supplierMeal": {
+              "id": "A",
+              "title": "A"
+            },
+            "room": {
+              "id": "DHS",
+              "title": "Pokój superior 2 os."
+            },
+            "baseRoomCode": null
+          }
+        ],
+        "content": {
+          "title": "Hotel Casa Mare Resort (ex. Royal Tulip Beach Resort)",
+          "hotelRating": 50,
+          "reviews": {
+            "customersRating": 5.1,
+            "reviewsNumber": 7658
+          },
+          "geographicalIdentifiers": [
+            {
+              "id": "egipt",
+              "title": "Egipt",
+              "type": "country",
+              "parentId": null,
+              "startingDestination": true
+            },
+            {
+              "id": "marsa-alam",
+              "title": "Marsa Alam",
+              "type": "province",
+              "parentId": "egipt",
+              "startingDestination": false
+            }
+          ]
+        }
+      },
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-10-02",
+        "beginTime": "14:40:00+03:00",
+        "endDate": "2026-10-02",
+        "endTime": "18:00:00+02:00",
+        "departure": {
+          "title": "Marsa Alam"
+        },
+        "destination": {
+          "title": "Katowice"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      }
+    ]
+  },
+  "variant": {
+    "id": "CgVJdGFrYRIEVklUWBoDUExOIgdSTUZUVUxSKAQ6BEwyNTNCBgiA89bVBkoGCIDo+9UGUAJiBQoDS1RXagUKA1JNRnIDCgE3egUKA1JNRoIBBQoDS1RXigEDCgE3kgEGCIDz1tUGmgEGCIDo+9UGogEFCgNESFOqAQMKAUHiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+    "supplierObjectId": "RMFTULR",
+    "rateType": "holidays",
+    "saleStatus": "available",
+    "beginDate": "2026-09-25",
+    "endDate": "2026-10-02",
+    "duration": {
+      "days": 8,
+      "nights": 7
+    },
+    "meal": {
+      "id": "A",
+      "title": "All inclusive"
+    },
+    "room": {
+      "id": "DHS",
+      "title": "Pokój superior 2 os."
+    },
+    "price": {
+      "actualPrice": {
+        "amount": 5798,
+        "currency": "PLN"
+      },
+      "actualWithAdditionalPayments": {
+        "amount": 5858,
+        "currency": "PLN"
+      },
+      "catalogPrice": {
+        "amount": 8498,
+        "currency": "PLN"
+      },
+      "additionalPayments": [
+        {
+          "type": "TFG",
+          "amount": {
+            "amount": 30,
+            "currency": "PLN"
+          }
+        },
+        {
+          "type": "TFP",
+          "amount": {
+            "amount": 30,
+            "currency": "PLN"
+          }
+        }
+      ],
+      "omnibusFirstAdultPrice": {
+        "amount": 2999,
+        "currency": "PLN"
+      },
+      "priceCatalogCode": "L253",
+      "prepayment": null,
+      "participants": [
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 4249,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 2899,
+            "currency": "PLN"
+          },
+          "omnibusPrice": {
+            "amount": 2999,
+            "currency": "PLN"
+          },
+          "ageOnDateOfReturn": 30
+        },
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 15,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 4249,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 2899,
+            "currency": "PLN"
+          },
+          "omnibusPrice": {
+            "amount": 2999,
+            "currency": "PLN"
+          },
+          "ageOnDateOfReturn": 30
+        }
+      ]
+    },
+    "participants": {
+      "adults": 2,
+      "children": 0,
+      "infants": 0,
+      "details": [
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        },
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        }
+      ]
+    },
+    "transport": {
+      "outbound": {
+        "type": "flight",
+        "id": "KTW",
+        "title": "Katowice",
+        "hireType": "charter",
+        "beginDateTime": "2026-09-25T08:30:00+02:00",
+        "isDirect": true
+      },
+      "inbound": {
+        "type": "flight",
+        "id": "RMF",
+        "title": "Marsa Alam",
+        "hireType": "charter",
+        "beginDateTime": "2026-10-02T14:40:00+03:00",
+        "isDirect": true
+      }
+    }
+  },
+  "summary": {
+    "rooms": {
+      "ids": [
+        "DHS"
+      ],
+      "types": [
+        "Pokój superior 2 os."
+      ],
+      "prices": [
+        2899
+      ],
+      "offerIds": [
+        "CgVJdGFrYRIEVklUWBoDUExOIgdSTUZUVUxSKAQ6BEwyNTNCBgiA89bVBkoGCIDo+9UGUAJiBQoDS1RXagUKA1JNRnIDCgE3egUKA1JNRoIBBQoDS1RXigEDCgE3kgEGCIDz1tUGmgEGCIDo+9UGogEFCgNESFOqAQMKAUHiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU="
+      ]
+    },
+    "roomCount": 1,
+    "totalPrice": 5858,
+    "transportDetails": {
+      "outbound": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Katowice",
+            "code": "KTW"
+          },
+          "dateTime": "2026-09-25T08:30:00",
+          "carrierName": "Electra Airways",
+          "carrierFlightNumber": "AMQ5528",
+          "carrierCode": "AMQ"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Marsa Alam",
+            "code": "RMF"
+          },
+          "dateTime": "2026-09-25T13:40:00",
+          "carrierName": "Electra Airways",
+          "carrierFlightNumber": "AMQ5528",
+          "carrierCode": "AMQ"
+        }
+      },
+      "return": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Marsa Alam",
+            "code": "RMF"
+          },
+          "dateTime": "2026-10-02T14:40:00",
+          "carrierName": "Electra Airways",
+          "carrierFlightNumber": "AMQ5529",
+          "carrierCode": "AMQ"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Katowice",
+            "code": "KTW"
+          },
+          "dateTime": "2026-10-02T18:00:00",
+          "carrierName": "Electra Airways",
+          "carrierFlightNumber": "AMQ5529",
+          "carrierCode": "AMQ"
+        }
+      }
+    }
+  },
+  "local_information": [
+    {
+      "title": "Niezbędne dokumenty Egipt",
+      "descriptionShort": "<style>\n  .info {\n      position: relative;\n      display: inline-block;\n  }\n\n  .info > img {\n      height: 1rem;\n      transform: translateY(0.1rem);\n  }\n\n  .info-popup{\n      background: #2B2B33;\n      color: white;\n      font-size: 14px;\n      line-height: 20px;\n      padding: 10px;\n      display: none;\n      position: absolute;\n      border-radius: 8px;\n      text-align: center;\n      width: 268px;\n      height: 100px;\n      transform: translate(-121.5px, 10px);\n      z-index: 1;\n  }\n\n  .info-popup::after{\n      content: '';\n      display: block;\n      width: 1rem;\n      height: 1rem;\n      position: absolute;\n      top: -.5rem;\n      background: #2B2B33;\n      left: 45%;\n      transform: rotateZ(45deg);\n      \n  }\n\n  .info:hover .info-popup {\n      display: block;\n  }\n\n  .listStyle {\n    list-style-type: disc !important;\n  } \n\n\n\n  @media (max-width:530px) {\n      .info-popup {\n          transform: translate(-56.5px, 10px);\n          width: unset;\n          height: unset;\n      }\n\n      \n  }\n</style>\n\n    <ul class=\"listStyle\">\n     <li class=\"listStyle\">paszport (także dla dziecka) ważny minimum 6 miesięcy od daty przylotu do Egiptu, z 1 pustą stroną</li>\n    <li class=\"listStyle\">wiza – koszt ok. 30 USD (płatność tylko gotówką), uzyskasz ją na lotnisku w Egipcie. <br> Na lotnisku w Marsa Alam oficjalnym punktem sprzedaży wizy w cenie ok. 30 USD jest stanowisko bankowe (Visa Service / Bank Accounts). Na lotnisku mogą znajdować się również inne punkty oferujące wizę w wyższej cenie, dlatego przed przekazaniem paszportu zalecamy upewnić się, jaki jest koszt wizy w danym punkcie.</li>\n    </ul> \n<span style=\"font-size: 12px; margin-top: 0.9rem; position: relative; padding-right: 30px;\">Przedstawione warunki wjazdowe dotyczą obywateli Polski.\n  <span class=\"info\">\n      <img src=\"https://s.content4travel.com/itkpl/sun_cloud_1_572d3f8849.svg?updated_at=2023-03-20T14:53:08.600Z\" alt=\"info\">\n          <span class=\"info-popup\">Obywatelom innych państw zaleca się kontakt z właściwym konsulatem w celu sprawdzenia obowiązujących ich przepisów wjazdowych</span>\n  </span>\n</span>",
+      "descriptionLong": ""
+    }
+  ],
+  "legacy_offer_id": "9b0e53f36c1775ef2ef4c4c099b3857a5626d016187ccae34752f1598fb8dc31"
+}

@@ -1,0 +1,383 @@
+{
+  "listing": {
+    "isConfirmed": false,
+    "isRecommended": false,
+    "isBestseller": true,
+    "isPromoted": false,
+    "supplier": "itaka",
+    "supplierObjectId": "CFUANGE",
+    "rateType": "holidays",
+    "brand": "VITX",
+    "currency": "PLN",
+    "participantGroups": [
+      {
+        "price": 363800,
+        "rateId": "CgVJdGFrYRIEVklUWBoDUExOIgdDRlVBTkdFKAQ6BDAyNkFCBgiA3ObVBkoGCIDF9tUGUAJiBQoDV1JPagUKA0NGVXIICgZEUDIwMDV6BQoDQ0ZVggEFCgNXUk+KAQgKBkRQMjAwNZIBBgiA3ObVBpoBBgiAxfbVBqIBBQoDREhTqgEDCgFB4gEJCgdCbHVlU2t56gEJCgdCbHVlU2t58gEJCgdSZXNhYmVl",
+        "priceCatalogCode": "026A",
+        "omnibusFirstAdultPrice": null,
+        "promotions": [
+          {
+            "value": "LastMinute",
+            "title": "Last Minute"
+          }
+        ],
+        "participants": [
+          {
+            "price": 181900,
+            "baseCatalogPrice": 181900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1000
+              },
+              {
+                "type": "TFP",
+                "amount": 1000
+              }
+            ]
+          },
+          {
+            "price": 181900,
+            "baseCatalogPrice": 181900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1000
+              },
+              {
+                "type": "TFP",
+                "amount": 1000
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "duration": {
+      "days": 4
+    },
+    "segments": [
+      {
+        "isExternal": true,
+        "type": "flight",
+        "beginDate": "2026-09-28",
+        "beginTime": "14:10:00+02:00",
+        "endDate": "2026-09-28",
+        "endTime": "17:25:00+03:00",
+        "departure": {
+          "title": "Wrocław"
+        },
+        "destination": {
+          "title": "Korfu"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      },
+      {
+        "isExternal": false,
+        "type": "hotel",
+        "beginDate": "2026-09-28",
+        "endDate": "2026-10-01",
+        "participantGroups": [
+          {
+            "objectType": null,
+            "meal": {
+              "id": "A",
+              "title": "All inclusive"
+            },
+            "mealGroup": {
+              "id": "A",
+              "title": "All inclusive"
+            },
+            "supplierMeal": {
+              "id": "A",
+              "title": "A"
+            },
+            "room": {
+              "id": "DHS",
+              "title": "Pokój superior 2 os."
+            },
+            "baseRoomCode": null
+          }
+        ],
+        "content": {
+          "title": "Hotel Angela Beach",
+          "hotelRating": 30,
+          "reviews": {
+            "customersRating": 4.8,
+            "reviewsNumber": 2920
+          },
+          "geographicalIdentifiers": [
+            {
+              "id": "grecja",
+              "title": "Grecja",
+              "type": "country",
+              "parentId": null,
+              "startingDestination": true
+            },
+            {
+              "id": "korfu",
+              "title": "Korfu",
+              "type": "province",
+              "parentId": "grecja",
+              "startingDestination": false
+            }
+          ]
+        }
+      },
+      {
+        "isExternal": true,
+        "type": "flight",
+        "beginDate": "2026-10-01",
+        "beginTime": "23:55:00+03:00",
+        "endDate": "2026-10-02",
+        "endTime": "01:15:00+02:00",
+        "departure": {
+          "title": "Korfu"
+        },
+        "destination": {
+          "title": "Wrocław"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      }
+    ]
+  },
+  "variant": {
+    "id": "CgVJdGFrYRIEVklUWBoDUExOIgdDRlVBTkdFKAQ6BDAyNkFCBgiA3ObVBkoGCIDF9tUGUAJiBQoDV1JPagUKA0NGVXIICgZEUDIwMDV6BQoDQ0ZVggEFCgNXUk+KAQgKBkRQMjAwNZIBBgiA3ObVBpoBBgiAxfbVBqIBBQoDREhTqgEDCgFB4gEJCgdCbHVlU2t56gEJCgdCbHVlU2t58gEJCgdSZXNhYmVl",
+    "supplierObjectId": "CFUANGE",
+    "rateType": "holidays",
+    "saleStatus": "available",
+    "beginDate": "2026-09-28",
+    "endDate": "2026-10-01",
+    "duration": {
+      "days": 4,
+      "nights": 3
+    },
+    "meal": {
+      "id": "A",
+      "title": "All inclusive"
+    },
+    "room": {
+      "id": "DHS",
+      "title": "Pokój superior 2 os."
+    },
+    "price": {
+      "actualPrice": {
+        "amount": 3638,
+        "currency": "PLN"
+      },
+      "actualWithAdditionalPayments": {
+        "amount": 3678,
+        "currency": "PLN"
+      },
+      "catalogPrice": {
+        "amount": 3638,
+        "currency": "PLN"
+      },
+      "additionalPayments": [
+        {
+          "type": "TFG",
+          "amount": {
+            "amount": 20,
+            "currency": "PLN"
+          }
+        },
+        {
+          "type": "TFP",
+          "amount": {
+            "amount": 20,
+            "currency": "PLN"
+          }
+        }
+      ],
+      "omnibusFirstAdultPrice": null,
+      "priceCatalogCode": "026A",
+      "prepayment": null,
+      "participants": [
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 10,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 10,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 1819,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 1819,
+            "currency": "PLN"
+          },
+          "omnibusPrice": null,
+          "ageOnDateOfReturn": 30
+        },
+        {
+          "type": "adult",
+          "additionalPayments": [
+            {
+              "type": "tfg",
+              "amount": {
+                "amount": 10,
+                "currency": "PLN"
+              }
+            },
+            {
+              "type": "tfp",
+              "amount": {
+                "amount": 10,
+                "currency": "PLN"
+              }
+            }
+          ],
+          "catalogPrice": {
+            "amount": 1819,
+            "currency": "PLN"
+          },
+          "price": {
+            "amount": 1819,
+            "currency": "PLN"
+          },
+          "omnibusPrice": null,
+          "ageOnDateOfReturn": 30
+        }
+      ]
+    },
+    "participants": {
+      "adults": 2,
+      "children": 0,
+      "infants": 0,
+      "details": [
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        },
+        {
+          "type": "adult",
+          "birthDate": "1996-01-01"
+        }
+      ]
+    },
+    "transport": {
+      "outbound": {
+        "type": "flight",
+        "id": "WRO",
+        "title": "Wrocław",
+        "hireType": "seats",
+        "beginDateTime": "2026-09-28T14:10:00+02:00",
+        "isDirect": true
+      },
+      "inbound": {
+        "type": "flight",
+        "id": "CFU",
+        "title": "Korfu",
+        "hireType": "seats",
+        "beginDateTime": "2026-10-01T23:55:00+03:00",
+        "isDirect": true
+      }
+    }
+  },
+  "summary": {
+    "rooms": {
+      "ids": [
+        "DHS"
+      ],
+      "types": [
+        "Pokój superior 2 os."
+      ],
+      "prices": [
+        1819
+      ],
+      "offerIds": [
+        "CgVJdGFrYRIEVklUWBoDUExOIgdDRlVBTkdFKAQ6BDAyNkFCBgiA3ObVBkoGCIDF9tUGUAJiBQoDV1JPagUKA0NGVXIICgZEUDIwMDV6BQoDQ0ZVggEFCgNXUk+KAQgKBkRQMjAwNZIBBgiA3ObVBpoBBgiAxfbVBqIBBQoDREhTqgEDCgFB4gEJCgdCbHVlU2t56gEJCgdCbHVlU2t58gEJCgdSZXNhYmVl"
+      ]
+    },
+    "roomCount": 1,
+    "totalPrice": 3678,
+    "transportDetails": {
+      "outbound": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Wrocław",
+            "code": "WRO"
+          },
+          "dateTime": "2026-09-28T14:10:00",
+          "carrierName": "Ryanair",
+          "carrierFlightNumber": "FR4556",
+          "carrierCode": "FR"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Korfu",
+            "code": "CFU"
+          },
+          "dateTime": "2026-09-28T17:25:00",
+          "carrierName": "Ryanair",
+          "carrierFlightNumber": "FR4556",
+          "carrierCode": "FR"
+        }
+      },
+      "return": {
+        "from": {
+          "type": "from",
+          "transportType": null,
+          "place": {
+            "title": "Korfu",
+            "code": "CFU"
+          },
+          "dateTime": "2026-10-01T23:55:00",
+          "carrierName": "Ryanair",
+          "carrierFlightNumber": "FR4555",
+          "carrierCode": "FR"
+        },
+        "to": {
+          "type": "to",
+          "transportType": null,
+          "place": {
+            "title": "Wrocław",
+            "code": "WRO"
+          },
+          "dateTime": "2026-10-02T01:15:00",
+          "carrierName": "Ryanair",
+          "carrierFlightNumber": "FR4555",
+          "carrierCode": "FR"
+        }
+      }
+    }
+  },
+  "local_information": [
+    {
+      "title": "Obowiązkowy podatek turystyczny",
+      "descriptionShort": "ok. 2-15 EUR/dzień/pokój, płatny na miejscu. Wysokość opłaty uzależniona jest od kategoryzacji obiektu.",
+      "descriptionLong": "<strong>Hotele:</strong>\n<ol style='list-style: none; margin-bottom: 0; ' >\n \n <li>1* i 2* – ok. 2 EUR/dzień/pokój</li>\n<li>3* – ok. 5 EUR/dzień/pokój  </li>\n    <li>4* – ok. 10 EUR/dzień/pokój </li>\n    <li>5* – ok. 15 EUR/dzień/pokój</li>\n    </ol>\n<strong>Studia i Apartamenty:</strong>\n<ol style='list-style: none; margin-bottom: 0; ' >\n    <li>ok. 2 EUR/dzień/pokój</li>\n       </ol>\n       <strong>Wille:</strong>\n<ol style='list-style: none; margin-bottom: 0; ' >\n    <li>ok. 10 EUR/dzień/pokój</li>\n       </ol>"
+    },
+    {
+      "title": "Niezbędne dokumenty",
+      "descriptionShort": "<style>\n    .info {\n        position: relative;\n        display: inline-block;\n    }\n\n    .info > img {\n        height: 1rem;\n        transform: translateY(0.1rem);\n\n    }\n\n    .info-popup{\n        background: #2B2B33;\n        color: white;\n        font-size: 14px;\n        line-height: 20px;\n        padding: 10px;\n        display: none;\n        position: absolute;\n        border-radius: 8px;\n        text-align: center;\n        width: 268px;\n        height: 100px;\n        transform: translate(-121.5px, 10px);\n        z-index: 1;\n    }\n\n    .info-popup::after{\n        content: '';\n        display: block;\n        width: 1rem;\n        height: 1rem;\n        position: absolute;\n        top: -.5rem;\n        background: #2B2B33;\n        left: 45%;\n        transform: rotateZ(45deg);\n        \n    }\n\n    .info:hover .info-popup {\n        display: block;\n    }\n\n    @media (max-width:530px) {\n        .info-popup {\n            transform: translate(-56.5px, 10px);\n            width: unset;\n            height: unset;\n        }\n    }\n</style>\nważny dowód osobisty lub paszport (także dla dziecka)<br>\n<span style=\"font-size: 12px; margin-top: 0.9rem; position: relative; padding-right: 30px;\">Przedstawione warunki wjazdowe dotyczą obywateli Polski.\n    <span class=\"info\">\n        <img src=\"https://s.content4travel.com/itkpl/sun_cloud_1_572d3f8849.svg?updated_at=2023-03-20T14:53:08.600Z\" alt=\"info\">\n            <span class=\"info-popup\">Obywatelom innych państw zaleca się kontakt z właściwym konsulatem w celu sprawdzenia obowiązujących ich przepisów wjazdowych</span>\n    </span>\n</span>",
+      "descriptionLong": ""
+    }
+  ],
+  "legacy_offer_id": "35a2707aecf5894c5a3fc6ec53c3aa9dc1cbbb7437e98680ad608a73e62979df"
+}

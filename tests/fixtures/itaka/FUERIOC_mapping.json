@@ -1,0 +1,1204 @@
+{
+  "listing": {
+    "isConfirmed": false,
+    "isRecommended": false,
+    "isBestseller": true,
+    "isPromoted": false,
+    "supplier": "itaka",
+    "supplierObjectId": "FUERIOC",
+    "rateType": "holidays",
+    "brand": "VITX",
+    "currency": "PLN",
+    "participantGroups": [
+      {
+        "price": 799800,
+        "rateId": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+        "priceCatalogCode": "L259",
+        "omnibusFirstAdultPrice": 419900,
+        "promotions": [
+          {
+            "value": "LastMinute",
+            "title": "Last Minute"
+          }
+        ],
+        "participants": [
+          {
+            "price": 399900,
+            "baseCatalogPrice": 580900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          },
+          {
+            "price": 399900,
+            "baseCatalogPrice": 580900,
+            "type": "adult",
+            "birthDate": "1996-01-01",
+            "ageOnReturnDay": 30,
+            "additionalPayments": [
+              {
+                "type": "TFG",
+                "amount": 1500
+              },
+              {
+                "type": "TFP",
+                "amount": 1500
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "duration": {
+      "days": 8
+    },
+    "segments": [
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-10-05",
+        "beginTime": "13:40:00+02:00",
+        "endDate": "2026-10-05",
+        "endTime": "18:10:00+01:00",
+        "departure": {
+          "title": "Pozna\u0144"
+        },
+        "destination": {
+          "title": "Puerto del Rosario"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      },
+      {
+        "isExternal": false,
+        "type": "hotel",
+        "beginDate": "2026-10-05",
+        "endDate": "2026-10-12",
+        "participantGroups": [
+          {
+            "objectType": null,
+            "meal": {
+              "id": "H",
+              "title": "2 posi\u0142ki"
+            },
+            "mealGroup": {
+              "id": "H",
+              "title": "2 posi\u0142ki"
+            },
+            "supplierMeal": {
+              "id": "H",
+              "title": "H"
+            },
+            "room": {
+              "id": "DBL",
+              "title": "Pok\u00f3j 2 os."
+            },
+            "baseRoomCode": null
+          }
+        ],
+        "content": {
+          "title": "Hotel R2 Rio Calma",
+          "assets": [
+            "w stylu kolonialnym",
+            "po\u0142o\u017cony w pi\u0119knym ogrodzie",
+            "profesjonalne centrum spa z bogat\u0105 ofert\u0105 zabieg\u00f3w",
+            "fantazyjne baseny, w tym infinity"
+          ],
+          "hotelRating": 40,
+          "facilities": [
+            {
+              "id": "spa",
+              "title": "SPA"
+            },
+            {
+              "id": "for-disabled",
+              "title": "Udogodnienia dla niepe\u0142nosprawnych"
+            },
+            {
+              "id": "wifi",
+              "title": "Wi-Fi gratis"
+            },
+            {
+              "id": "for-singles",
+              "title": "Dla singli"
+            }
+          ],
+          "distances": {
+            "beach": null,
+            "cityCenter": null
+          },
+          "categories": [
+            {
+              "id": "for-seniors",
+              "title": "Dla senior\u00f3w"
+            },
+            {
+              "id": "workation",
+              "title": "Workation"
+            },
+            {
+              "id": "romantic-holidays",
+              "title": "Romantyczne wakacje"
+            }
+          ],
+          "photos": {
+            "gallery": [
+              "https://s.content4travel.com/pim-itk/fuerioc_0_ef5fd50c4e.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_1_00f94cf4b5.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_2_b9f49923d8.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_3_f949a15c56.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_4_58ce147c8d.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_5_aec74d9380.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_6_9c8a9b2647.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_7_72599497f7.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_8_31079c3b1b.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_9_2249b3ce36.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_10_f573dc003c.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_11_f7d6eb4ee5.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_12_ab82a6c98f.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_13_2b7e2440df.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_14_247e9c1ffd.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_15_f91e56bc58.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_16_ed98fbd5f3.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_17_4c5ca49d87.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_18_1cf42a41cd.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_19_2a5c1d9421.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_20_548d91719d.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_21_4c5260e461.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_22_8f9e6bdfae.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_23_ed2f2328df.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_24_773262b5ae.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_25_853fbc55b1.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_26_e12dcda0a4.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_27_ae093c64a3.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_28_ed2da81fbe.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_29_0322d41ef1.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_30_bd52639e96.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_31_eb9fb90a59.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_32_4918b26bc8.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_33_d232e976bf.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_34_8af4812e55.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_35_89ef464e6d.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_36_d591314290.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_37_36fa602f07.jpg",
+              "https://s.content4travel.com/pim-itk/fuerioc_38_83a0048a29.jpg"
+            ]
+          },
+          "reviews": {
+            "customersRating": 5.3,
+            "positiveReviewsPercentage": 97,
+            "reviewsNumber": 4930,
+            "ratings": [
+              {
+                "title": "room",
+                "value": 4.8
+              },
+              {
+                "title": "foodService",
+                "value": 5
+              },
+              {
+                "title": "staff",
+                "value": 5.1
+              },
+              {
+                "title": "animations",
+                "value": 4
+              },
+              {
+                "title": "location",
+                "value": 4.8
+              },
+              {
+                "title": "beach",
+                "value": 3.8
+              },
+              {
+                "title": "highlights",
+                "value": 3.6
+              },
+              {
+                "title": "qualityByPrice",
+                "value": 4.8
+              },
+              {
+                "title": "comfort",
+                "value": 4.6
+              }
+            ]
+          },
+          "destinations": {
+            "country": {
+              "photos": null
+            },
+            "province": {
+              "photos": null
+            }
+          },
+          "geographicalIdentifiers": [
+            {
+              "id": "wyspy-kanaryjskie",
+              "title": "Wyspy Kanaryjskie",
+              "type": "country",
+              "parentId": null,
+              "startingDestination": true
+            },
+            {
+              "id": "fuerteventura",
+              "title": "Fuerteventura",
+              "type": "province",
+              "parentId": "wyspy-kanaryjskie",
+              "startingDestination": false
+            }
+          ],
+          "geolocation": {
+            "lat": 28.16765696829,
+            "lng": -14.2094957828522
+          },
+          "newContent": {
+            "assets": [
+              "w stylu kolonialnym",
+              "po\u0142o\u017cony w pi\u0119knym ogrodzie",
+              "profesjonalne centrum spa z bogat\u0105 ofert\u0105 zabieg\u00f3w",
+              "fantazyjne baseny, w tym infinity"
+            ]
+          }
+        }
+      },
+      {
+        "isExternal": false,
+        "type": "flight",
+        "beginDate": "2026-10-12",
+        "beginTime": "18:45:00+01:00",
+        "endDate": "2026-10-13",
+        "endTime": "01:15:00+02:00",
+        "departure": {
+          "title": "Puerto del Rosario"
+        },
+        "destination": {
+          "title": "Pozna\u0144"
+        },
+        "otherFlightClassAvailable": false,
+        "airplaneType": null
+      }
+    ]
+  },
+  "objects": [
+    {
+      "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BFo2MDBCBgiA7Z3YBkoGCIDiwtgGUAJiBQoDV0FXagUKA0ZVRXIDCgEyegUKA0ZVRYIBBQoDV0FXigEDCgEykgEGCIDtndgGmgEGCIDiwtgGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "supplierObjectId": "FUERIOC",
+      "rateType": "holidays",
+      "saleStatus": "available",
+      "beginDate": "2026-11-26",
+      "endDate": "2026-12-03",
+      "duration": {
+        "days": 8,
+        "nights": 7
+      },
+      "meal": {
+        "id": "H",
+        "title": "2 posi\u0142ki"
+      },
+      "room": {
+        "id": "DBL",
+        "title": "Pok\u00f3j 2 os."
+      },
+      "price": {
+        "actualPrice": {
+          "amount": 7958,
+          "currency": "PLN"
+        },
+        "actualWithAdditionalPayments": {
+          "amount": 8018,
+          "currency": "PLN"
+        },
+        "catalogPrice": {
+          "amount": 10198,
+          "currency": "PLN"
+        },
+        "additionalPayments": [
+          {
+            "type": "TFG",
+            "amount": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          },
+          {
+            "type": "TFP",
+            "amount": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          }
+        ],
+        "omnibusFirstAdultPrice": null,
+        "priceCatalogCode": "Z600",
+        "prepayment": {
+          "amount": {
+            "amount": 1604,
+            "currency": "PLN"
+          },
+          "paymentDate": "2026-09-20",
+          "restPaymentDate": "2026-10-27"
+        },
+        "participants": [
+          {
+            "type": "adult",
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "catalogPrice": {
+              "amount": 5099,
+              "currency": "PLN"
+            },
+            "price": {
+              "amount": 3979,
+              "currency": "PLN"
+            },
+            "omnibusPrice": null,
+            "ageOnDateOfReturn": 30
+          },
+          {
+            "type": "adult",
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "catalogPrice": {
+              "amount": 5099,
+              "currency": "PLN"
+            },
+            "price": {
+              "amount": 3979,
+              "currency": "PLN"
+            },
+            "omnibusPrice": null,
+            "ageOnDateOfReturn": 30
+          }
+        ]
+      },
+      "transport": {
+        "outbound": {
+          "type": "flight",
+          "id": "WAW",
+          "title": "Warszawa-Ok\u0119cie",
+          "hireType": "charter",
+          "beginDateTime": "2026-11-26T08:35:00+01:00",
+          "isDirect": true
+        },
+        "inbound": {
+          "type": "flight",
+          "id": "FUE",
+          "title": "Puerto del Rosario",
+          "hireType": "charter",
+          "beginDateTime": "2026-12-03T14:10:00+00:00",
+          "isDirect": true
+        }
+      },
+      "participants": {
+        "adults": 2,
+        "children": 0,
+        "infants": 0
+      }
+    },
+    {
+      "rateId": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "supplierObjectId": "FUERIOC"
+    },
+    {
+      "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "saleStatus": "available",
+      "participants": {
+        "adults": 2,
+        "children": 0,
+        "infants": 0
+      },
+      "price": {
+        "actualPrice": {
+          "amount": 7998,
+          "currency": "PLN"
+        },
+        "catalogPrice": {
+          "amount": 11618,
+          "currency": "PLN"
+        },
+        "additionalPayments": [
+          {
+            "type": "tfg",
+            "amount": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          },
+          {
+            "type": "tfp",
+            "amount": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          }
+        ],
+        "omnibusFirstAdultPrice": {
+          "amount": 4199,
+          "currency": "PLN"
+        },
+        "priceCatalogCode": "L259",
+        "prepayment": null,
+        "participants": [
+          {
+            "type": "adult",
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "catalogPrice": {
+              "amount": 5809,
+              "currency": "PLN"
+            },
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            },
+            "omnibusPrice": {
+              "amount": 4199,
+              "currency": "PLN"
+            },
+            "ageOnDateOfReturn": 30
+          },
+          {
+            "type": "adult",
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "catalogPrice": {
+              "amount": 5809,
+              "currency": "PLN"
+            },
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            },
+            "omnibusPrice": {
+              "amount": 4199,
+              "currency": "PLN"
+            },
+            "ageOnDateOfReturn": 30
+          }
+        ]
+      }
+    },
+    {
+      "participantGroups": [
+        {
+          "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+          "participants": {
+            "adults": 2,
+            "children": 0,
+            "infants": 0
+          },
+          "mainRoom": {
+            "id": "DBL",
+            "title": "Pok\u00f3j 2 os."
+          },
+          "mainMeal": {
+            "id": "H",
+            "title": "2 posi\u0142ki"
+          }
+        }
+      ],
+      "beginDate": "2026-10-05",
+      "endDate": "2026-10-12",
+      "duration": {
+        "days": 8,
+        "nights": 7
+      },
+      "price": {
+        "total": {
+          "amount": 7998,
+          "currency": "PLN"
+        },
+        "totalWithAdditionalPayments": {
+          "amount": 8058,
+          "currency": "PLN"
+        },
+        "perPerson": {
+          "amount": 3999,
+          "currency": "PLN"
+        }
+      }
+    },
+    {
+      "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "participants": {
+        "adults": 2,
+        "children": 0,
+        "infants": 0
+      },
+      "mainRoom": {
+        "id": "DBL",
+        "title": "Pok\u00f3j 2 os."
+      },
+      "mainMeal": {
+        "id": "H",
+        "title": "2 posi\u0142ki"
+      }
+    },
+    {
+      "meal": {
+        "id": "H",
+        "title": "2 posi\u0142ki"
+      },
+      "rooms": {
+        "ids": [
+          "DBL"
+        ],
+        "types": [
+          "Pok\u00f3j 2 os."
+        ],
+        "prices": [
+          3999
+        ],
+        "offerIds": [
+          "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU="
+        ]
+      },
+      "departurePlace": {
+        "title": "Warszawa-Ok\u0119cie",
+        "id": "WAW"
+      },
+      "date": {
+        "duration": 8,
+        "range": {
+          "start": "2026-11-26",
+          "end": "2026-12-03"
+        }
+      },
+      "participants": {
+        "adultNumber": 2,
+        "childrenNumber": 0,
+        "infantNumber": 0,
+        "childrenBirthDates": []
+      },
+      "roomCount": 1,
+      "totalPrice": 8058,
+      "price": {
+        "currency": "PLN",
+        "actualPrice": 8058,
+        "priceCatalogCode": "L259",
+        "prePaymentAmount": 1604
+      },
+      "transportDetails": {
+        "outbound": {
+          "from": {
+            "type": "from",
+            "transportType": null,
+            "place": {
+              "title": "Warszawa-Ok\u0119cie",
+              "code": "WAW"
+            },
+            "dateTime": "2026-11-26T08:35:00",
+            "carrierName": "Smartwings",
+            "carrierFlightNumber": "TVP7304",
+            "carrierCode": "TVP"
+          },
+          "to": {
+            "type": "to",
+            "transportType": null,
+            "place": {
+              "title": "Puerto del Rosario",
+              "code": "FUE"
+            },
+            "dateTime": "2026-11-26T13:20:00",
+            "carrierName": "Smartwings",
+            "carrierFlightNumber": "TVP7304",
+            "carrierCode": "TVP"
+          }
+        },
+        "return": {
+          "from": {
+            "type": "from",
+            "transportType": null,
+            "place": {
+              "title": "Puerto del Rosario",
+              "code": "FUE"
+            },
+            "dateTime": "2026-12-03T14:10:00",
+            "carrierName": "Smartwings",
+            "carrierFlightNumber": "TVP7305",
+            "carrierCode": "TVP"
+          },
+          "to": {
+            "type": "to",
+            "transportType": null,
+            "place": {
+              "title": "Warszawa-Ok\u0119cie",
+              "code": "WAW"
+            },
+            "dateTime": "2026-12-03T20:25:00",
+            "carrierName": "Smartwings",
+            "carrierFlightNumber": "TVP7305",
+            "carrierCode": "TVP"
+          }
+        }
+      }
+    },
+    {
+      "participantGroups": [
+        {
+          "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+          "mainMeal": {
+            "id": "H",
+            "title": "2 posi\u0142ki"
+          }
+        }
+      ],
+      "price": {
+        "amount": 7998,
+        "currency": "PLN"
+      },
+      "priceWithAdditionalPayments": {
+        "amount": 8058,
+        "currency": "PLN"
+      }
+    },
+    {
+      "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "mainMeal": {
+        "id": "H",
+        "title": "2 posi\u0142ki"
+      }
+    },
+    {
+      "beginDate": "2026-10-05",
+      "endDate": "2026-10-12",
+      "participantGroups": [
+        {
+          "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+          "mainRoom": {
+            "roomId": "DBL",
+            "title": "Pok\u00f3j 2 os.",
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            }
+          },
+          "totalParticipants": 2
+        }
+      ],
+      "price": {
+        "amount": 7998,
+        "currency": "PLN"
+      },
+      "priceWithAdditionalPayments": {
+        "amount": 8058,
+        "currency": "PLN"
+      }
+    },
+    {
+      "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "mainRoom": {
+        "roomId": "DBL",
+        "title": "Pok\u00f3j 2 os.",
+        "price": {
+          "amount": 3999,
+          "currency": "PLN"
+        }
+      }
+    },
+    {
+      "participantGroups": [
+        {
+          "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+          "saleStatus": "available",
+          "participants": {
+            "adults": 2,
+            "children": 0,
+            "infants": 0
+          },
+          "price": {
+            "actualPrice": {
+              "amount": 7998,
+              "currency": "PLN"
+            },
+            "catalogPrice": {
+              "amount": 11618,
+              "currency": "PLN"
+            },
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 30,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 30,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "omnibusFirstAdultPrice": {
+              "amount": 4199,
+              "currency": "PLN"
+            },
+            "priceCatalogCode": "L259",
+            "prepayment": null,
+            "participants": [
+              {
+                "type": "adult",
+                "additionalPayments": [
+                  {
+                    "type": "tfg",
+                    "amount": {
+                      "amount": 15,
+                      "currency": "PLN"
+                    }
+                  },
+                  {
+                    "type": "tfp",
+                    "amount": {
+                      "amount": 15,
+                      "currency": "PLN"
+                    }
+                  }
+                ],
+                "catalogPrice": {
+                  "amount": 5809,
+                  "currency": "PLN"
+                },
+                "price": {
+                  "amount": 3999,
+                  "currency": "PLN"
+                },
+                "omnibusPrice": {
+                  "amount": 4199,
+                  "currency": "PLN"
+                },
+                "ageOnDateOfReturn": 30
+              },
+              {
+                "type": "adult",
+                "additionalPayments": [
+                  {
+                    "type": "tfg",
+                    "amount": {
+                      "amount": 15,
+                      "currency": "PLN"
+                    }
+                  },
+                  {
+                    "type": "tfp",
+                    "amount": {
+                      "amount": 15,
+                      "currency": "PLN"
+                    }
+                  }
+                ],
+                "catalogPrice": {
+                  "amount": 5809,
+                  "currency": "PLN"
+                },
+                "price": {
+                  "amount": 3999,
+                  "currency": "PLN"
+                },
+                "omnibusPrice": {
+                  "amount": 4199,
+                  "currency": "PLN"
+                },
+                "ageOnDateOfReturn": 30
+              }
+            ]
+          },
+          "mainRoom": {
+            "roomId": "DBL",
+            "title": "Pok\u00f3j 2 os.",
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            }
+          }
+        }
+      ],
+      "beginDate": "2026-10-05",
+      "endDate": "2026-10-12",
+      "duration": {
+        "days": 8,
+        "nights": 7
+      },
+      "departure": {
+        "type": "flight",
+        "participantGroups": [
+          {
+            "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+            "saleStatus": "available",
+            "participants": {
+              "adults": 2,
+              "children": 0,
+              "infants": 0
+            },
+            "price": {
+              "actualPrice": {
+                "amount": 7998,
+                "currency": "PLN"
+              },
+              "catalogPrice": {
+                "amount": 11618,
+                "currency": "PLN"
+              },
+              "additionalPayments": [
+                {
+                  "type": "tfg",
+                  "amount": {
+                    "amount": 30,
+                    "currency": "PLN"
+                  }
+                },
+                {
+                  "type": "tfp",
+                  "amount": {
+                    "amount": 30,
+                    "currency": "PLN"
+                  }
+                }
+              ],
+              "omnibusFirstAdultPrice": {
+                "amount": 4199,
+                "currency": "PLN"
+              },
+              "priceCatalogCode": "L259",
+              "prepayment": null,
+              "participants": [
+                {
+                  "type": "adult",
+                  "additionalPayments": [
+                    {
+                      "type": "tfg",
+                      "amount": {
+                        "amount": 15,
+                        "currency": "PLN"
+                      }
+                    },
+                    {
+                      "type": "tfp",
+                      "amount": {
+                        "amount": 15,
+                        "currency": "PLN"
+                      }
+                    }
+                  ],
+                  "catalogPrice": {
+                    "amount": 5809,
+                    "currency": "PLN"
+                  },
+                  "price": {
+                    "amount": 3999,
+                    "currency": "PLN"
+                  },
+                  "omnibusPrice": {
+                    "amount": 4199,
+                    "currency": "PLN"
+                  },
+                  "ageOnDateOfReturn": 30
+                },
+                {
+                  "type": "adult",
+                  "additionalPayments": [
+                    {
+                      "type": "tfg",
+                      "amount": {
+                        "amount": 15,
+                        "currency": "PLN"
+                      }
+                    },
+                    {
+                      "type": "tfp",
+                      "amount": {
+                        "amount": 15,
+                        "currency": "PLN"
+                      }
+                    }
+                  ],
+                  "catalogPrice": {
+                    "amount": 5809,
+                    "currency": "PLN"
+                  },
+                  "price": {
+                    "amount": 3999,
+                    "currency": "PLN"
+                  },
+                  "omnibusPrice": {
+                    "amount": 4199,
+                    "currency": "PLN"
+                  },
+                  "ageOnDateOfReturn": 30
+                }
+              ]
+            }
+          }
+        ],
+        "id": "POZ",
+        "title": "Pozna\u0144",
+        "beginDateTime": "2026-10-05T13:40:00+02:00"
+      },
+      "meal": [
+        {
+          "id": "H",
+          "title": "2 posi\u0142ki"
+        }
+      ],
+      "rooms": [
+        {
+          "id": "DBL",
+          "title": "Pok\u00f3j 2 os."
+        }
+      ],
+      "price": {
+        "total": {
+          "amount": 7998,
+          "currency": "PLN"
+        },
+        "totalWithAdditionalPayments": {
+          "amount": 8058,
+          "currency": "PLN"
+        },
+        "prepayment": null,
+        "perPerson": {
+          "amount": 3999,
+          "currency": "PLN"
+        },
+        "perPersonWithAdditionalPayments": {
+          "amount": 4029,
+          "currency": "PLN"
+        },
+        "receipt": [
+          {
+            "type": "adult",
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            },
+            "quantity": 1
+          },
+          {
+            "type": "adult",
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            },
+            "quantity": 1
+          },
+          {
+            "type": "tfg",
+            "quantity": 2,
+            "price": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          },
+          {
+            "type": "tfp",
+            "quantity": 2,
+            "price": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "CgVJdGFrYRIEVklUWBoDUExOIgdGVUVSSU9DKAQ6BEwyNTlCBgiA0YvWBkoGCIDGsNYGUAJiBQoDUE9aagUKA0ZVRXIDCgExegUKA0ZVRYIBBQoDUE9aigEDCgExkgEGCIDRi9YGmgEGCIDGsNYGogEFCgNEQkyqAQMKAUjiAQkKB1Jlc2FiZWXqAQkKB1Jlc2FiZWXyAQkKB1Jlc2FiZWU=",
+      "saleStatus": "available",
+      "participants": {
+        "adults": 2,
+        "children": 0,
+        "infants": 0
+      },
+      "price": {
+        "actualPrice": {
+          "amount": 7998,
+          "currency": "PLN"
+        },
+        "catalogPrice": {
+          "amount": 11618,
+          "currency": "PLN"
+        },
+        "additionalPayments": [
+          {
+            "type": "tfg",
+            "amount": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          },
+          {
+            "type": "tfp",
+            "amount": {
+              "amount": 30,
+              "currency": "PLN"
+            }
+          }
+        ],
+        "omnibusFirstAdultPrice": {
+          "amount": 4199,
+          "currency": "PLN"
+        },
+        "priceCatalogCode": "L259",
+        "prepayment": null,
+        "participants": [
+          {
+            "type": "adult",
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "catalogPrice": {
+              "amount": 5809,
+              "currency": "PLN"
+            },
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            },
+            "omnibusPrice": {
+              "amount": 4199,
+              "currency": "PLN"
+            },
+            "ageOnDateOfReturn": 30
+          },
+          {
+            "type": "adult",
+            "additionalPayments": [
+              {
+                "type": "tfg",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              },
+              {
+                "type": "tfp",
+                "amount": {
+                  "amount": 15,
+                  "currency": "PLN"
+                }
+              }
+            ],
+            "catalogPrice": {
+              "amount": 5809,
+              "currency": "PLN"
+            },
+            "price": {
+              "amount": 3999,
+              "currency": "PLN"
+            },
+            "omnibusPrice": {
+              "amount": 4199,
+              "currency": "PLN"
+            },
+            "ageOnDateOfReturn": 30
+          }
+        ]
+      },
+      "mainRoom": {
+        "roomId": "DBL",
+        "title": "Pok\u00f3j 2 os.",
+        "price": {
+          "amount": 3999,
+          "currency": "PLN"
+        }
+      }
+    }
+  ],
+  "source_paths": [
+    "record:ba[3].children[3].children[3].variant",
+    "record:df",
+    "record:b0[3].children[3].initialParticipantGroups[0]",
+    "record:b0[3].children[3].children[3].children[3][3].children[3].dates[2]",
+    "record:b0[3].children[3].children[3].children[3][3].children[3].dates[2].participantGroups[0]",
+    "record:be[1][3].variant",
+    "record:b8[3].children[3].children[3].children[3].children[1][3].children[0][3].meal",
+    "record:b8[3].children[3].children[3].children[3].children[1][3].children[0][3].meal.participantGroups[0]",
+    "record:b7[3].children[3].children[3].children[3].rooms",
+    "record:b7[3].children[3].children[3].children[3].rooms.participantGroups[0]",
+    "record:b1[3].children[3].children[3].current",
+    "record:b1[3].children[3].children[3].current.participantGroups[0]"
+  ]
+}

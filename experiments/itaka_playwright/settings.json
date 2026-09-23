@@ -1,0 +1,7 @@
+{
+  "max_offers": 10,
+  "max_analyzed_cards": 15,
+  "max_scrolls": 20,
+  "max_idle_scrolls": 3,
+  "scroll_wait_ms": 1500
+}
