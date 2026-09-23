@@ -1,0 +1,231 @@
+"""TUI hybrid provider: HTTP robots check, then one passive Playwright capture.
+
+The confirmed production data source is the client-side
+`.../api/services/tui-search/api/search/offers` response, observed by passively
+listening after opening a `build_search_path` URL in a real browser -- never fetched
+directly (see `tui_browser`). The SSR `/wypoczynek/wyniki-wyszukiwania-samolot`
+route itself was confirmed to render only a loading skeleton with no offers via
+plain HTTP, so that path is not used here. `filtering.matches()` downstream remains
+the sole authority for eligibility (stay length, price/person, etc.) regardless of
+what upstream returns.
+
+Pagination is confirmed live (2026-09-22 reconnaissance,
+`data/tui-production/pagination-recon-20260922T200838Z/`): a query with
+`pagination.pagesCount > 1` (174 pages, 3469 results, using only already-
+confirmed `build_search_path` parameters with wider values), followed by one
+`page=2` navigation, returned `pagination.page == 1` (0-indexed second page,
+consistent with the `page` query parameter being 1-indexed) and a completely
+disjoint set of 20 `offerCode`s from page 1 -- genuinely new results, not a
+repeat. At most `max_pages` (config, default `1`, MVP value `3`) pages are
+fetched, bounded by the *live-observed* `pagination.pagesCount` on page 1 --
+this provider never fetches more pages than the site itself reports exist, and
+never guesses a page's content without requesting it.
+
+After the (possibly multi-page) listing capture, at most `max_detail_requests`
+(default 1) of the cheapest listed offers get one additional, passive detail-
+page navigation to confirm real-time price/availability (see
+`tui_price.confirm_realtime_price`), mirroring ITAKA's bounded detail-
+confirmation budget. `price_is_complete` is set to `True` only for a
+structurally confirmed charter-flight package tour whose mandatory TFG+TFP
+fund matches the officially confirmed rate -- see `tui_price`'s module
+docstring. Every other outcome (non-charter, unavailable, ambiguous,
+malformed) leaves the offer unconfirmed (`CHARTER_PACKAGE_NOT_CONFIRMED` or the
+specific rejection reason) without ever failing the whole cycle.
+
+**Browser-navigation budget per cycle (TUI is heavier than an HTTP-only source
+like Wakacje.pl -- every request here is a full Playwright page load, not a
+plain HTTP GET):** at most `max_pages` listing navigations (page 1 is always
+fetched; `config.py` caps `max_pages` at 3 for this provider) plus at most
+`max_detail_requests` detail navigations (capped at 3). For the shipped
+config (`max_pages: 3`, `max_detail_requests: 1`) that is at most 4
+navigations per cycle. A transient timeout fetching page 2 or 3 keeps every
+page already fetched and simply stops further pagination for that cycle
+(`TuiTimeout` only); a block, ambiguous response or schema/robots failure on
+any page still fails the whole cycle exactly as before -- pagination never
+weakens those existing fail-closed checks. `robots.txt` (one plain HTTP
+request, not a navigation) and `timeout_seconds` bound each individual
+navigation's own duration.
+
+**Aggregate cycle deadline:** `cycle_seconds` (config, default `90`) bounds
+the whole cycle's wall-clock time, checked with an injected monotonic `clock`
+before every Playwright navigation *after* the first (page 1 is always
+fetched, mirroring ITAKA/Rainbow's own always-fetched first request). This is
+independent of each navigation's own `timeout_seconds` -- a slow but
+individually successful sequence of navigations can still exceed the
+aggregate budget. When exceeded, the affected step is skipped exactly as if
+its own transient `TuiTimeout` had fired: pagination keeps every page already
+fetched and stops requesting more; detail confirmation leaves the remaining
+candidates unconfirmed (`price_is_complete=False`) without attempting their
+navigation. This never catches `TuiBlocked`/`TuiStructureError`/robots
+failures, which still fail the whole cycle exactly as before.
+"""
+
+import logging
+import time
+from collections.abc import Callable
+from dataclasses import replace
+from datetime import datetime
+from urllib.parse import urlsplit
+
+from ..config_types import FilterConfig, ProviderConfig
+from ..models import Offer, utc_now
+from .base import Provider
+from .http import Transport, UrllibTransport
+from .robots import robots_policy
+from .tui_browser import capture_offer_price, capture_search_offers
+from .tui_data import extract_search_response_pagination, parse_search_response
+from .tui_errors import TuiError, TuiTimeout
+from .tui_price import confirm_realtime_price
+from .tui_query import PATH, build_search_path
+
+logger = logging.getLogger(__name__)
+BASE = "https://www.tui.pl"
+
+# Re-exported for existing imports/tests (`from .tui import robots_policy`);
+# the implementation now lives in .robots, shared with itaka.py and wakacje.py.
+__all__ = ["robots_policy"]
+
+
+def _dedupe_by_offer_id(offers: list[Offer]) -> list[Offer]:
+    """Keep the first occurrence of each offer_id across pages.
+
+    Live reconnaissance found zero overlap between pages, but this stays a
+    defensive guard against any future overlap (e.g. sorting shifting between
+    two page fetches) -- it never merges different offer_ids, so distinct
+    dates/variants of the same hotel are never collapsed into one entry.
+    """
+    seen: set[str] = set()
+    result: list[Offer] = []
+    for offer in offers:
+        if offer.offer_id in seen:
+            continue
+        seen.add(offer.offer_id)
+        result.append(offer)
+    return result
+
+
+class TuiProvider(Provider):
+    name = "tui"
+
+    def __init__(
+        self,
+        configuration: ProviderConfig,
+        filters: FilterConfig,
+        transport: Transport | None = None,
+        capture: Callable[[str, float], str] = capture_search_offers,
+        capture_price: Callable[[str, float], str] = capture_offer_price,
+        sleep: Callable[[float], None] = time.sleep,
+        wall_clock: Callable[[], datetime] = utc_now,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.configuration = configuration
+        self.filters = filters
+        self.path = build_search_path(filters)
+        self.transport = transport or UrllibTransport()
+        self.capture = capture
+        self.capture_price = capture_price
+        self.sleep = sleep
+        self.wall_clock = wall_clock
+        self.clock = clock
+
+    def fetch(self) -> list[Offer]:
+        cfg = self.configuration
+        timeout = cfg.get("timeout_seconds", 20)
+        deadline = self.clock() + cfg.get("cycle_seconds", 90)
+        robots_response = self.transport.get(BASE + "/robots.txt", timeout)
+        if robots_response.status != 200:
+            raise ValueError(f"TUI robots.txt HTTP {robots_response.status}; no automatic retry")
+        delay = robots_policy(robots_response.text, PATH)
+        if delay:
+            self.sleep(delay)
+        body = self.capture(BASE + self.path, timeout)
+        offers = parse_search_response(body, self.wall_clock())
+        offers += self._fetch_additional_pages(body, robots_response.text, timeout, deadline)
+        offers = _dedupe_by_offer_id(offers)
+        logger.info(
+            "TUI: %s offers parsed from the passively captured search/offers response(s)",
+            len(offers),
+        )
+        return self._confirm_candidates(offers, robots_response.text, timeout, deadline)
+
+    def _fetch_additional_pages(
+        self, first_page_body: str, robots_text: str, timeout: float, deadline: float
+    ) -> list[Offer]:
+        """Fetch page 2..min(pagesCount, max_pages), never more than the site
+        itself reports existing and never guessed beyond a live pagesCount."""
+        max_pages = self.configuration.get("max_pages", 1)
+        if max_pages is None:
+            max_pages = 1  # config.py rejects null for tui; belt-and-braces here too
+        pagination = extract_search_response_pagination(first_page_body)
+        pages_count = pagination.get("pagesCount")
+        total_pages = pages_count if isinstance(pages_count, int) and pages_count > 0 else 1
+        pages_to_fetch = min(total_pages, max_pages)
+
+        offers: list[Offer] = []
+        for page in range(2, pages_to_fetch + 1):
+            if self.clock() >= deadline:
+                logger.warning(
+                    "TUI pagination stopped before page %s (cycle deadline exceeded); "
+                    "keeping %s page(s) already fetched",
+                    page,
+                    page - 1,
+                )
+                break
+            page_delay = robots_policy(robots_text, PATH)
+            if page_delay:
+                self.sleep(page_delay)
+            path = build_search_path(self.filters, page=page)
+            try:
+                page_body = self.capture(BASE + path, timeout)
+                offers += parse_search_response(page_body, self.wall_clock())
+            except TuiTimeout as exc:
+                logger.warning(
+                    "TUI pagination stopped at page %s (timeout); keeping pages already fetched: %s",
+                    page,
+                    exc,
+                )
+                break
+        return offers
+
+    def _confirm_candidates(
+        self, offers: list[Offer], robots_text: str, timeout: float, deadline: float
+    ) -> list[Offer]:
+        """Confirm at most `max_detail_requests` candidates' real-time price.
+
+        A rejected or inconclusive confirmation never fails the cycle: the
+        original, unconfirmed offer is kept with its rejection reason recorded.
+        """
+        budget = self.configuration.get("max_detail_requests", 1)
+        detail_calls = 0
+        deadline_exceeded = False
+        result: list[Offer] = []
+        for offer in offers:
+            if detail_calls >= budget or offer.url is None:
+                result.append(offer)
+                continue
+            if not deadline_exceeded and self.clock() >= deadline:
+                deadline_exceeded = True
+                logger.warning(
+                    "TUI detail confirmation stopped (cycle deadline exceeded); "
+                    "remaining offer(s) stay unconfirmed"
+                )
+            if deadline_exceeded:
+                result.append(offer)
+                continue
+            detail_calls += 1
+            try:
+                detail_path = urlsplit(offer.url).path
+                price_delay = robots_policy(robots_text, detail_path)
+                if price_delay:
+                    self.sleep(price_delay)
+                price_body = self.capture_price(offer.url, timeout)
+                result.append(confirm_realtime_price(offer, price_body))
+            except (ValueError, KeyError, TypeError, IndexError, TuiError) as exc:
+                logger.warning("TUI real-time price check rejected for %s: %s", offer.offer_id, exc)
+                result.append(replace(offer, price_verification_reason=str(exc)))
+        logger.info(
+            "TUI: %s detail confirmation attempt(s) out of %s offers",
+            detail_calls,
+            len(offers),
+        )
+        return result

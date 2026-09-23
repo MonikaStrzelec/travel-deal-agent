@@ -1,0 +1,81 @@
+{
+  "pagination": {
+    "page": 0,
+    "pageSize": 20,
+    "totalResults": 13,
+    "sorting": "price",
+    "pagesCount": 1
+  },
+  "offers": [
+    {
+      "hotelCode": "MLA13036",
+      "hotelName": "Bella Vista",
+      "hotelStandard": 3.0,
+      "offerCode": "KTWMLA20261204153020261204202612101740L06MLA130367DWVA02ROV7DWA02FCMM",
+      "duration": 6,
+      "offerUrl": "/wypoczynek/malta/bella-vista-mla13036/OfferCodeWS/KTWMLA20261204153020261204202612101740L06MLA130367DWVA02ROV7DWA02FCMM",
+      "breadcrumbs": [
+        {
+          "label": "Malta",
+          "url": "/wypoczynek/malta"
+        },
+        {
+          "label": "St. Paul`s Bay"
+        }
+      ],
+      "discountFullPrice": "2194",
+      "originalFullPrice": "2194",
+      "discountPerPersonPrice": "1097",
+      "originalPerPersonPrice": "1097",
+      "departureDate": "04.12.2026",
+      "returnDate": "10.12.2026",
+      "departureTime": "15:30",
+      "departureAirport": "Katowice",
+      "boardType": "Trzy posiłki",
+      "boardCode": "GT06-FB",
+      "tripAdvisorRating": 2.9,
+      "tripAdvisorReviewsNo": 2374,
+      "participants": "2 Dorosłych + 0 Dzieci",
+      "currency": "PLN",
+      "soldOut": false
+    },
+    {
+      "hotelCode": "VAR11019",
+      "hotelName": "Hotel Koral",
+      "hotelStandard": 3.5,
+      "offerCode": "WAWBOJ20270907134520270907202709141750L07VAR11019DZX1HA02ROHDZX1A02FCYY",
+      "duration": 7,
+      "offerUrl": "/wypoczynek/bulgaria/riwiera-bulgarska/hotel-koral-var11019/OfferCodeWS/WAWBOJ20270907134520270907202709141750L07VAR11019DZX1HA02ROHDZX1A02FCYY",
+      "breadcrumbs": [
+        {
+          "label": "Bułgaria",
+          "url": "/wypoczynek/bulgaria"
+        },
+        {
+          "label": "Riwiera Bułgarska",
+          "url": "/wypoczynek/bulgaria/riwiera-bulgarska"
+        },
+        {
+          "label": "Św. Konstantyn i Elena"
+        }
+      ],
+      "discountFullPrice": "2800",
+      "originalFullPrice": "2800",
+      "discountPerPersonPrice": "1400",
+      "originalPerPersonPrice": "1400",
+      "departureDate": "07.09.2027",
+      "returnDate": "14.09.2027",
+      "departureTime": "13:45",
+      "departureAirport": "Warszawa-Chopina",
+      "boardType": "Dwa posiłki",
+      "boardCode": "GT06-HB",
+      "tripAdvisorRating": 3.4,
+      "tripAdvisorReviewsNo": 181,
+      "participants": "2 Dorosłych + 0 Dzieci",
+      "currency": "PLN",
+      "soldOut": false
+    }
+  ],
+  "responseType": "NORMAL",
+  "currency": "PLN"
+}

@@ -1,0 +1,13 @@
+services:
+  travel-deal-agent:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # SQLite database and rotating logs survive container restarts/recreates.
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Edit config.json on the host and restart the container to apply it;
+      # read-only so the running process can never write back to it.
+      - ./config.json:/app/config.json:ro

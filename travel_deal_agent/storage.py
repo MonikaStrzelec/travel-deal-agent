@@ -1,0 +1,209 @@
+"""SQLite snapshots, price history and a transactional notification outbox."""
+
+import sqlite3
+from dataclasses import replace
+from decimal import Decimal
+from pathlib import Path
+from types import TracebackType
+
+from pydantic import TypeAdapter
+from typing_extensions import TypedDict
+
+from .alerts import classify_alert
+from .models import Offer, duplicate_key, utc_now
+
+
+class Notification(TypedDict):
+    id: int
+    kind: str
+    payload: str
+    previous_price: str | None
+
+
+class RunState(TypedDict):
+    next_run: float
+    failures: int
+
+
+class Store:
+    """Persist observations and outbox entries in the same SQLite transaction."""
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.connection = sqlite3.connect(path, timeout=10)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.executescript("""
+            CREATE TABLE IF NOT EXISTS offers (
+                provider TEXT NOT NULL, offer_id TEXT NOT NULL,
+                payload TEXT NOT NULL, price TEXT, currency TEXT,
+                found_at TEXT NOT NULL, last_seen TEXT NOT NULL,
+                PRIMARY KEY(provider, offer_id)
+            );
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY, provider TEXT NOT NULL,
+                offer_id TEXT NOT NULL, price TEXT, currency TEXT, seen_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS alert_state (
+                group_key TEXT PRIMARY KEY, lowest_alert_price TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL,
+                previous_price TEXT, created_at TEXT NOT NULL, delivered_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS provider_runs (
+                provider TEXT PRIMARY KEY, next_run REAL NOT NULL, failures INTEGER NOT NULL
+            );
+        """)
+
+    def __enter__(self) -> "Store":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release the connection, including when used as a context manager."""
+        self.connection.close()
+
+    def observe(self, offer: Offer, eligible: bool, threshold: Decimal) -> list[str]:
+        """Record one observation atomically and return resulting event names.
+
+        `eligible` is trusted as-is: it must already be the result of
+        `filtering.matches(offer, filters)` (see `OfferPipeline.filter_batch`/
+        `finalize`), which is the single place that decides both business
+        eligibility and whether an incomplete price is acceptable for this
+        offer's provider (`filters["accept_incomplete_price_from"]`). Storage
+        is a persistence boundary, not a policy layer: it does not re-derive
+        that business decision from `offer.price_is_complete` or from
+        business configuration, to avoid a second, driftable copy of the same
+        rule. `pipeline.py`'s contract test pins this invariant.
+        """
+        if eligible and offer.price_per_person is None:
+            raise ValueError("An eligible offer must have a price")
+        now = utc_now()
+        events = []
+        with self.connection:
+            previous = self.get_offer(offer.provider, offer.offer_id)
+            snapshot = replace(
+                offer, found_at=previous.found_at if previous else now, last_seen=now
+            )
+            self._save_snapshot(snapshot)
+            if (
+                previous is None
+                or previous.price_per_person != offer.price_per_person
+                or previous.currency != offer.currency
+            ):
+                self._save_price(snapshot)
+                if previous is not None:
+                    events.append("price_changed")
+            if eligible:
+                kind = self._enqueue_alert(snapshot, threshold)
+                if kind:
+                    events.append(kind)
+        return events
+
+    def _save_snapshot(self, offer: Offer) -> None:
+        price = str(offer.price_per_person) if offer.price_per_person is not None else None
+        self.connection.execute(
+            "INSERT OR REPLACE INTO offers VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                offer.provider,
+                offer.offer_id,
+                offer.to_json(),
+                price,
+                offer.currency,
+                offer.found_at.isoformat(),
+                offer.last_seen.isoformat(),
+            ),
+        )
+
+    def _save_price(self, offer: Offer) -> None:
+        self.connection.execute(
+            "INSERT INTO price_history(provider,offer_id,price,currency,seen_at) VALUES (?,?,?,?,?)",
+            (
+                offer.provider,
+                offer.offer_id,
+                str(offer.price_per_person) if offer.price_per_person is not None else None,
+                offer.currency,
+                offer.last_seen.isoformat(),
+            ),
+        )
+
+    def _enqueue_alert(self, offer: Offer, threshold: Decimal) -> str | None:
+        if offer.price_per_person is None:
+            raise ValueError("An alert requires a price")
+        key = duplicate_key(offer)
+        row = self.connection.execute(
+            "SELECT * FROM alert_state WHERE group_key=?", (key,)
+        ).fetchone()
+        baseline = Decimal(row["lowest_alert_price"]) if row else None
+        kind = classify_alert(offer.price_per_person, baseline, threshold)
+        if kind:
+            self.connection.execute(
+                "INSERT INTO notifications(kind,payload,previous_price,created_at) VALUES (?,?,?,?)",
+                (
+                    kind,
+                    offer.to_json(),
+                    str(baseline) if baseline is not None else None,
+                    offer.last_seen.isoformat(),
+                ),
+            )
+            self.connection.execute(
+                "INSERT OR REPLACE INTO alert_state VALUES (?,?)",
+                (key, str(offer.price_per_person)),
+            )
+        return kind
+
+    def get_offer(self, provider: str, offer_id: str) -> Offer | None:
+        """Retrieve the latest snapshot of a source-specific trip variant."""
+        row = self.connection.execute(
+            "SELECT payload FROM offers WHERE provider=? AND offer_id=?", (provider, offer_id)
+        ).fetchone()
+        return TypeAdapter(Offer).validate_json(row["payload"]) if row else None
+
+    def price_history(self, provider: str, offer_id: str) -> list[Decimal | None]:
+        """Return observed price changes in observation order."""
+        rows = self.connection.execute(
+            "SELECT price FROM price_history WHERE provider=? AND offer_id=? ORDER BY id",
+            (provider, offer_id),
+        ).fetchall()
+        return [Decimal(row["price"]) if row["price"] is not None else None for row in rows]
+
+    def pending(self) -> list[Notification]:
+        """Return undelivered outbox entries in creation order."""
+        rows = self.connection.execute(
+            "SELECT * FROM notifications WHERE delivered_at IS NULL ORDER BY id"
+        ).fetchall()
+        return [
+            Notification(
+                id=row["id"],
+                kind=row["kind"],
+                payload=row["payload"],
+                previous_price=row["previous_price"],
+            )
+            for row in rows
+        ]
+
+    def mark_delivered(self, notification_id: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE notifications SET delivered_at=? WHERE id=?",
+                (utc_now().isoformat(), notification_id),
+            )
+
+    def run_state(self, name: str) -> RunState | None:
+        row = self.connection.execute(
+            "SELECT * FROM provider_runs WHERE provider=?", (name,)
+        ).fetchone()
+        return RunState(next_run=row["next_run"], failures=row["failures"]) if row else None
+
+    def schedule(self, name: str, next_run: float, failures: int) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO provider_runs VALUES (?,?,?)", (name, next_run, failures)
+            )

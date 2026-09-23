@@ -1,0 +1,28 @@
+# Secrets and machine-local environment
+.env
+.env.*
+!.env.example
+
+# Persistent/generated data -- must come from the volume, never the image
+data/
+logs/
+
+# Local virtual environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Not needed at runtime
+tests/
+experiments/
+.git/
+.github/
+requirements-dev.txt
+README.md
+AGENTS.md
