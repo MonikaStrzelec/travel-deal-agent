@@ -183,6 +183,58 @@ provider's own persisted due time (`interval_seconds`, or the randomized range a
 untouched while scans are skipped, so entering active hours triggers exactly one normal
 check per due provider, not a burst covering every interval missed overnight.
 
+## Windows autostart (Task Scheduler)
+
+`--watch` can start automatically at logon, independent of VS Code or any open terminal,
+using the built-in Windows Task Scheduler. No wrapper script, `.bat` or `.ps1` is needed:
+Task Scheduler can launch the interpreter directly.
+
+Point the action at `pythonw.exe` instead of `python.exe`. Every `venv` created on Windows
+already ships both; `pythonw.exe` is the windowless build of the same interpreter, so no
+console window appears. Logging is unaffected — the rotating file handler still writes to
+`logs/agent.log` as usual, and the console handler's writes are simply discarded (there is
+no console for them to appear in).
+
+The project is not pip-installed, so `python -m travel_deal_agent` only resolves the
+package when the process's working directory *is* the project root (the directory
+containing `travel_deal_agent/`, `config.json` and `.env`) — this is exactly what Task
+Scheduler's "Start in" field controls, and it must be set explicitly. Without it the task
+fails immediately with `No module named travel_deal_agent`. `.env` and `config.json`
+themselves are found independently of the working directory (`config.py` resolves them
+from the installed package's own file location), but the working directory is still
+required for the module import itself to succeed.
+
+Task Scheduler setup (no administrator rights required):
+
+1. Open Task Scheduler → **Create Task…** (not the basic wizard, to reach every Settings
+   tab option below).
+2. **General**: give it a name; leave **"Run only when user is logged on"** selected (the
+   default). This run level never stores your Windows password anywhere.
+3. **Triggers** → New… → Begin the task: **At log on**.
+4. **Actions** → New… → Action: *Start a program*:
+   - Program/script: `<project-root>\.venv\Scripts\pythonw.exe`
+   - Add arguments: `-m travel_deal_agent --watch`
+   - Start in: `<project-root>`
+5. **Settings**:
+   - "If the task is already running, then the following rule applies" → **Do not start a
+     new instance** (the application has no locking of its own; two schedulers must never
+     run against the same SQLite database at once).
+   - Check "If the task fails, restart every" (e.g. 1 minute), "Attempt to restart up to"
+     (e.g. 3 times).
+   - **Uncheck** "Stop the task if it runs longer than 3 days" — this box is ticked by
+     default in the creation wizard and would silently kill a long-running `--watch`.
+
+Behavior notes:
+
+- **Restart on failure** and **single-instance protection** are both handled by the
+  Settings-tab options above; nothing in the application enforces them.
+- **Startup after downtime**: if the machine was off during part of the active-hours
+  window and the user logs on later (e.g. the window opens at 07:00 but logon happens at
+  10:15), `run_forever`'s first `run_once()` reads the real wall clock, finds 10:15 inside
+  `07:00`–`23:30`, and immediately runs every provider whose persisted due time has already
+  elapsed — one ordinary catch-up check, not a burst per hour of missed downtime.
+- Manual runs and tests are unaffected; this section only concerns unattended `--watch`.
+
 ## Example flow
 
 1. The mock adapter returns four fictional offers with future departure dates.
