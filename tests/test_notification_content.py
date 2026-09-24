@@ -100,14 +100,31 @@ def test_missing_data_is_omitted_not_placeholdered(offer: Offer, store: Store) -
 
 
 def test_price_drop_message_shows_previous_price(offer: Offer, store: Store) -> None:
-    store.observe(offer, True)
-    store.observe(replace(offer, price_per_person=Decimal("1199")), True)
+    # A drop that is not also a new historical low (the price had already
+    # gone lower before, then climbed back up) renders as SPADEK CENY.
+    store.observe(offer, True)  # 1299
+    store.observe(replace(offer, price_per_person=Decimal("1000")), True)  # new low
+    store.observe(replace(offer, price_per_person=Decimal("1200")), True)  # back up; no alert
 
+    events = store.observe(replace(offer, price_per_person=Decimal("1100")), True)
+    assert events == ["price_changed", "price_drop"]
     message = NotificationMessage.from_notification(store.pending()[-1]).render()
 
     assert "SPADEK CENY" in message
+    assert "💰 1100 zł/os." in message
+    assert "📉 Było 1200 zł/os. • spadek 100 zł" in message
+
+
+def test_new_low_message_shows_previous_price(offer: Offer, store: Store) -> None:
+    store.observe(offer, True)  # 1299
+
+    events = store.observe(replace(offer, price_per_person=Decimal("1199")), True)
+    assert events == ["price_changed", "new_low"]
+    message = NotificationMessage.from_notification(store.pending()[-1]).render()
+
+    assert "NAJNIŻSZA CENA" in message
     assert "💰 1199 zł/os." in message
-    assert "📉 Poprzednio: 1299 zł/os." in message
+    assert "📉 Było 1299 zł/os. • spadek 100 zł" in message
 
 
 def test_pipeline_persists_final_score_for_stable_retries(

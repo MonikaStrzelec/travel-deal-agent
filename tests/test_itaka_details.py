@@ -756,7 +756,9 @@ def test_confirmation_preserves_history_and_alert_baseline(
         normalize_rate(fixture["listing"], []), fixture["listing"], detail_html(fixture)
     )
     pipeline.finalize(pipeline.filter_batch("itaka", [cheaper]))
-    assert [n["kind"] for n in store.pending()] == ["new_offer", "price_drop"]
+    # 1350 undercuts the only prior recorded price (1450), so it is this
+    # offer's new historical low, not merely a drop from the last observation.
+    assert [n["kind"] for n in store.pending()] == ["new_offer", "new_low"]
     assert store.pending()[1]["previous_price"] == "1450"
 
 

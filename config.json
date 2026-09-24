@@ -190,6 +190,8 @@
     }
   },
   "alert_rearm_hours": 24,
+  "price_drop_min_amount": "50",
+  "price_drop_min_percent": 0.05,
   "scheduler": {
     "max_backoff_exponent": 5,
     "idle_poll_seconds": 30

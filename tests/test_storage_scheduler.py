@@ -37,26 +37,86 @@ def test_new_offer_survives_restart(offer: Offer, store: Store, settings: Settin
         assert snapshot.price_per_person == Decimal("1299")
 
 
-def test_price_change_and_cumulative_drop(offer: Offer, store: Store) -> None:
-    # Arrange / Act / Assert: any drop below the lowest alerted price alerts,
-    # with no minimum drop amount; an unchanged or higher price never does.
+def test_repeated_unchanged_price_never_reallerts(offer: Offer, store: Store) -> None:
+    # A repeat observation of the same price is not a "drop" against itself.
     assert store.observe(offer, True) == ["new_offer"]
-    small_drop = replace(offer, price_per_person=Decimal("1298"))
-    assert store.observe(small_drop, True) == ["price_changed", "price_drop"]
-    assert store.observe(small_drop, True) == []
-    assert store.observe(offer, True) == ["price_changed"]
-    assert store.observe(small_drop, True) == ["price_changed"]
-    big_drop = replace(offer, price_per_person=Decimal("1199"))
-    assert store.observe(big_drop, True) == ["price_changed", "price_drop"]
-    assert [n["kind"] for n in store.pending()] == ["new_offer", "price_drop", "price_drop"]
-    assert [n["previous_price"] for n in store.pending()] == [None, "1299", "1298"]
+    assert store.observe(offer, True) == []
+    assert [n["kind"] for n in store.pending()] == ["new_offer"]
+
+
+def test_small_price_change_updates_history_without_alerting(
+    settings: Settings, offer: Offer
+) -> None:
+    # Arrange: the project's configured noise floor (>=50 PLN or >=5%, see
+    # config.json price_drop_min_amount/price_drop_min_percent).
+    with Store(settings.database, price_drop_threshold=settings.price_drop_threshold) as store:
+        assert store.observe(offer, True) == ["new_offer"]
+        # Act: a 1 PLN drop clears neither the absolute nor the percentage floor.
+        events = store.observe(replace(offer, price_per_person=Decimal("1298")), True)
+        # Assert: the price change is still recorded, but nothing is queued for Telegram.
+        assert events == ["price_changed"]
+        assert store.price_history(offer.provider, offer.offer_id) == [
+            Decimal("1299"),
+            Decimal("1298"),
+        ]
+        assert [n["kind"] for n in store.pending()] == ["new_offer"]
+
+
+def test_meaningful_drop_without_a_new_low_is_price_drop(settings: Settings, offer: Offer) -> None:
+    # A drop can be meaningful without setting a new historical low -- the
+    # price had already gone lower before and has since climbed back up.
+    with Store(settings.database, price_drop_threshold=settings.price_drop_threshold) as store:
+        assert store.observe(offer, True) == ["new_offer"]  # 1299
+        assert store.observe(replace(offer, price_per_person=Decimal("1000")), True) == [
+            "price_changed",
+            "new_low",
+        ]
+        assert store.observe(replace(offer, price_per_person=Decimal("1200")), True) == [
+            "price_changed"
+        ]  # price increased; no alert
+        # Act: 1100 is a meaningful drop from 1200, but still above the 1000 low.
+        events = store.observe(replace(offer, price_per_person=Decimal("1100")), True)
+        # Assert
+        assert events == ["price_changed", "price_drop"]
+        assert [n["kind"] for n in store.pending()] == ["new_offer", "new_low", "price_drop"]
+        assert store.pending()[-1]["previous_price"] == "1200"
+
+
+def test_meaningful_drop_that_is_also_a_new_low_alerts_once(
+    settings: Settings, offer: Offer
+) -> None:
+    with Store(settings.database, price_drop_threshold=settings.price_drop_threshold) as store:
+        assert store.observe(offer, True) == ["new_offer"]  # 1299
+        # Act: a single drop that is simultaneously meaningful and a new historical low.
+        events = store.observe(replace(offer, price_per_person=Decimal("1100")), True)
+        # Assert: exactly one notification (new_low takes priority), never two.
+        assert events == ["price_changed", "new_low"]
+        assert [n["kind"] for n in store.pending()] == ["new_offer", "new_low"]
+        assert store.pending()[-1]["previous_price"] == "1299"
+
+
+def test_price_increase_updates_history_without_alerting(offer: Offer, store: Store) -> None:
+    store.observe(offer, True)
+    events = store.observe(replace(offer, price_per_person=Decimal("1350")), True)
+    assert events == ["price_changed"]
     assert store.price_history(offer.provider, offer.offer_id) == [
         Decimal("1299"),
-        Decimal("1298"),
-        Decimal("1299"),
-        Decimal("1298"),
-        Decimal("1199"),
+        Decimal("1350"),
     ]
+
+
+def test_historical_minimum_is_correctly_calculated(offer: Offer, store: Store) -> None:
+    store.observe(offer, True)
+    store.observe(replace(offer, price_per_person=Decimal("1199")), True)
+    store.observe(replace(offer, price_per_person=Decimal("1400")), True)
+
+    stats = store.price_stats(offer.provider, offer.offer_id)
+
+    assert stats is not None
+    assert stats.current_price == Decimal("1400")
+    assert stats.previous_price == Decimal("1199")
+    assert stats.lowest_price == Decimal("1199")
+    assert stats.first_seen <= stats.last_seen
 
 
 def test_unchanged_offer_is_not_realerted_on_later_hourly_scans(
@@ -96,8 +156,9 @@ def test_offer_returning_after_the_rearm_window_alerts_again(
         again = store.observe(offer, True)
         # Assert
         assert early == []
-        assert returned == ["new_offer"]
+        assert returned == ["returned"]
         assert again == []
+        assert [n["kind"] for n in store.pending()] == ["new_offer", "returned"]
         assert [n["previous_price"] for n in store.pending()] == [None, None]
 
 
@@ -116,9 +177,10 @@ def test_alert_state_from_an_older_database_is_upgraded(offer: Offer, settings: 
     with Store(settings.database, alert_rearm_after=timedelta(hours=24)) as store:
         repeated = store.observe(offer, True)
         cheaper = store.observe(replace(offer, price_per_person=Decimal("1200")), True)
-    # Assert: the previously alerted offer is not re-announced; a better price is.
+    # Assert: the previously alerted offer is not re-announced; a better price is
+    # (1200 undercuts the only prior recorded price, so it is a new low).
     assert repeated == []
-    assert cheaper == ["price_changed", "price_drop"]
+    assert cheaper == ["price_changed", "new_low"]
 
 
 def test_rearm_window_must_be_positive(settings: Settings) -> None:

@@ -171,3 +171,5 @@ class AppConfig(TypedDict):
     active_hours: ActiveHoursConfig
     alert_rearm_hours: int
     attractiveness: AttractivenessConfig
+    price_drop_min_amount: str
+    price_drop_min_percent: float

@@ -2,7 +2,7 @@
 
 import sqlite3
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -11,7 +11,7 @@ from types import TracebackType
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from .alerts import classify_alert
+from .alerts import NO_MINIMUM_DROP, PriceDropThreshold, classify_alert
 from .models import Offer, duplicate_key, utc_now
 
 
@@ -27,12 +27,31 @@ class RunState(TypedDict):
     failures: int
 
 
+@dataclass(frozen=True)
+class PriceStats:
+    """Derived price-history facts for one stably identified (provider, offer_id).
+
+    Computed from the existing `offers`/`price_history` tables -- no
+    redundant columns. `previous_price`/`lowest_price` are `None` when there
+    is not yet a prior price to compare against.
+    """
+
+    current_price: Decimal | None
+    previous_price: Decimal | None
+    lowest_price: Decimal | None
+    first_seen: datetime
+    last_seen: datetime
+
+
 class Store:
     """Persist observations and outbox entries in the same SQLite transaction.
 
     `alert_rearm_after` is how long an alerted offer group must go without an
     eligible observation before it is announced again as new; `None` never
-    re-announces an unchanged price.
+    re-announces an unchanged price. `price_drop_threshold` is the minimum
+    drop (PLN amount or percentage) that turns a lower price into a
+    `price_drop`/`new_low` notification; the default makes any drop
+    significant, matching this project's original threshold-free behavior.
     """
 
     def __init__(
@@ -40,11 +59,13 @@ class Store:
         path: Path,
         alert_rearm_after: timedelta | None = None,
         clock: Callable[[], datetime] = utc_now,
+        price_drop_threshold: PriceDropThreshold = NO_MINIMUM_DROP,
     ) -> None:
         if alert_rearm_after is not None and alert_rearm_after <= timedelta(0):
             raise ValueError("Alert re-arm period must be positive")
         self.alert_rearm_after = alert_rearm_after
         self.clock = clock
+        self.price_drop_threshold = price_drop_threshold
         path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path, timeout=10)
         self.connection.row_factory = sqlite3.Row
@@ -110,6 +131,16 @@ class Store:
         events = []
         with self.connection:
             previous = self.get_offer(offer.provider, offer.offer_id)
+            # Read this exact offer's own prior price and historical low
+            # *before* this observation is saved below -- these describe
+            # what was already known, not what we are about to record.
+            previous_price = (
+                previous.price_per_person
+                if previous is not None and previous.currency == offer.currency
+                else None
+            )
+            prior_prices = self._price_series(offer.provider, offer.offer_id, offer.currency)
+            lowest_price = min(prior_prices) if prior_prices else None
             snapshot = replace(
                 offer, found_at=previous.found_at if previous else now, last_seen=now
             )
@@ -123,7 +154,7 @@ class Store:
                 if previous is not None:
                     events.append("price_changed")
             if eligible:
-                kind = self._enqueue_alert(snapshot)
+                kind = self._enqueue_alert(snapshot, previous_price, lowest_price)
                 if kind:
                     events.append(kind)
         return events
@@ -155,12 +186,20 @@ class Store:
             ),
         )
 
-    def _enqueue_alert(self, offer: Offer) -> str | None:
+    def _enqueue_alert(
+        self, offer: Offer, previous_price: Decimal | None, lowest_price: Decimal | None
+    ) -> str | None:
         """Queue at most one alert per eligible observation of an offer group.
 
         Every eligible observation refreshes `last_eligible_at`, so a group that
         stays present in hourly scans never looks "returned"; an identical
         repeat observation therefore never produces a duplicate alert.
+
+        `previous_price`/`lowest_price` describe this specific (provider,
+        offer_id)'s own prior observations (see `observe`); `baseline` here
+        is unrelated to them -- it is the group-level (`duplicate_key`)
+        "has this offer group ever been alerted before" marker that
+        `classify_alert` uses only for `new_offer`/`returned`.
         """
         if offer.price_per_person is None:
             raise ValueError("An alert requires a price")
@@ -179,7 +218,14 @@ class Store:
             and last_eligible is not None
             and offer.last_seen - last_eligible >= self.alert_rearm_after
         )
-        kind = classify_alert(offer.price_per_person, baseline, returned)
+        kind = classify_alert(
+            offer.price_per_person,
+            baseline,
+            returned,
+            previous_price,
+            lowest_price,
+            self.price_drop_threshold,
+        )
         seen = offer.last_seen.isoformat()
         if kind:
             self.connection.execute(
@@ -187,7 +233,7 @@ class Store:
                 (
                     kind,
                     offer.to_json(),
-                    str(baseline) if kind == "price_drop" else None,
+                    str(previous_price) if kind in ("price_drop", "new_low") else None,
                     seen,
                 ),
             )
@@ -215,6 +261,41 @@ class Store:
             (provider, offer_id),
         ).fetchall()
         return [Decimal(row["price"]) if row["price"] is not None else None for row in rows]
+
+    def _price_series(self, provider: str, offer_id: str, currency: str | None) -> list[Decimal]:
+        """Same-currency observed price changes only, oldest first.
+
+        Prices are stored as exact-decimal TEXT, so comparisons/minimums are
+        always done here in Python (correct `Decimal` ordering), never via a
+        SQL `MIN()`/`ORDER BY` on the TEXT column (which would sort
+        lexicographically, e.g. treat "1200" as less than "950").
+        """
+        rows = self.connection.execute(
+            "SELECT price, currency FROM price_history WHERE provider=? AND offer_id=? ORDER BY id",
+            (provider, offer_id),
+        ).fetchall()
+        return [
+            Decimal(row["price"])
+            for row in rows
+            if row["price"] is not None and row["currency"] == currency
+        ]
+
+    def price_stats(self, provider: str, offer_id: str) -> PriceStats | None:
+        """Current/previous/lowest price and first/last-seen for one stably
+        identified offer, derived from the existing snapshot/history tables
+        (see `PriceStats`); `None` when this (provider, offer_id) was never observed.
+        """
+        offer = self.get_offer(provider, offer_id)
+        if offer is None:
+            return None
+        history = self._price_series(provider, offer_id, offer.currency)
+        return PriceStats(
+            current_price=offer.price_per_person,
+            previous_price=history[-2] if len(history) >= 2 else None,
+            lowest_price=min(history) if history else None,
+            first_seen=offer.found_at,
+            last_seen=offer.last_seen,
+        )
 
     def pending(self) -> list[Notification]:
         """Return undelivered outbox entries in creation order."""
