@@ -19,9 +19,17 @@ class PriceBand(TypedDict):
 
 
 class RatingRule(TypedDict):
+    """A provider's native rating rule.
+
+    `min_rating` is one price-independent threshold; when it is set,
+    `price_bands` must be empty. Otherwise `price_bands` holds explicit
+    price-dependent thresholds.
+    """
+
     enabled: bool
     scale: RatingScale | None
     price_bands: list[PriceBand]
+    min_rating: NotRequired[float]
 
 
 class BoardPriceBand(TypedDict):
@@ -37,11 +45,10 @@ class FilterConfig(TypedDict):
     currency: str
     airports: list[str]
     min_stars: float
-    country_min_stars: dict[str, float]
     allowed_boards: list[str]
     board_price_bands: list[BoardPriceBand]
-    min_days: int
-    max_days: int | None
+    min_nights: int | None
+    max_nights: int | None
     provider_ratings: dict[str, RatingRule]
     accept_incomplete_price_from: NotRequired[list[str]]
 
@@ -120,4 +127,4 @@ class AppConfig(TypedDict):
     external_verification: ExternalConfig
     scheduler: SchedulerConfig
     active_hours: ActiveHoursConfig
-    price_drop_pln: str
+    alert_rearm_hours: int

@@ -4,6 +4,7 @@ import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -33,7 +34,7 @@ class Settings:
     filters: FilterConfig
     ranking: RankingConfig
     providers: dict[str, ProviderConfig]
-    price_drop: Decimal
+    alert_rearm_after: timedelta
     database: Path
     log_level: str
     external_verification: ExternalConfig
@@ -66,24 +67,23 @@ def load_telegram_config(env: Mapping[str, str] | None = None) -> TelegramConfig
 
 def validate_filters(filters: FilterConfig) -> None:
     """Reject invalid limits before processing any offers."""
-    if filters["people"] < 1 or filters["min_days"] < 1:
-        raise ValueError("People and min_days must be positive")
-    maximum = filters["max_days"]
-    if maximum is not None and maximum < filters["min_days"]:
-        raise ValueError("max_days must be null or at least min_days")
+    if filters["people"] < 1:
+        raise ValueError("People must be positive")
+    minimum_nights, maximum_nights = filters["min_nights"], filters["max_nights"]
+    if minimum_nights is not None and minimum_nights < 1:
+        raise ValueError("min_nights must be null or positive")
+    if maximum_nights is not None and maximum_nights < 1:
+        raise ValueError("max_nights must be null or positive")
+    if (
+        minimum_nights is not None
+        and maximum_nights is not None
+        and maximum_nights < minimum_nights
+    ):
+        raise ValueError("max_nights must be null or at least min_nights")
     if not filters["airports"] or not filters["currency"]:
         raise ValueError("Airports and currency are required")
-    for minimum in (filters["min_stars"], *filters["country_min_stars"].values()):
-        if not 0 < minimum <= 5:
-            raise ValueError("Star thresholds must be between 0 and 5")
-    for country in filters["country_min_stars"]:
-        if (
-            len(country) != 2
-            or not country.isascii()
-            or not country.isalpha()
-            or not country.isupper()
-        ):
-            raise ValueError("Country overrides require uppercase two-letter codes (including XK)")
+    if not 0 < filters["min_stars"] <= 5:
+        raise ValueError("Star threshold must be between 0 and 5")
     if not filters["allowed_boards"] or not set(filters["allowed_boards"]) <= CANONICAL_BOARDS - {
         "RO"
     }:
@@ -116,6 +116,8 @@ def positive_decimal(value: str) -> Decimal:
 
 def validate_options(raw: AppConfig) -> None:
     """Validate ranking, scheduling and external verification settings."""
+    if type(raw["alert_rearm_hours"]) is not int or raw["alert_rearm_hours"] <= 0:
+        raise ValueError("alert_rearm_hours must be a positive whole number of hours")
     ranking = raw["ranking"]
     expected = {
         "price",
@@ -273,7 +275,7 @@ def load_settings() -> Settings:
         raw["filters"],
         ranking,
         raw["providers"],
-        positive_decimal(raw["price_drop_pln"]),
+        timedelta(hours=raw["alert_rearm_hours"]),
         ROOT / os.getenv("TDA_DATABASE", "data/offers.sqlite3"),
         level,
         raw["external_verification"],

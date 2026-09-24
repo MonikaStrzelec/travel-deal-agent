@@ -1,4 +1,4 @@
-"""Configurable native rating scales and explicit price-band boundaries."""
+"""Configurable native rating scales, single thresholds and explicit price bands."""
 
 import math
 from decimal import Decimal
@@ -29,6 +29,8 @@ def rating_matches(offer: Offer, rules: dict[str, RatingRule]) -> bool:
         or offer.price_per_person is None
     ):
         return False
+    if "min_rating" in rule:
+        return offer.rating >= rule["min_rating"]
     for band in rule["price_bands"]:
         maximum = Decimal(str(band["max_price"]))
         below_maximum = offer.price_per_person < maximum or (
@@ -50,8 +52,14 @@ def validate_rating_rules(rules: dict[str, RatingRule]) -> None:
             or scale["min"] >= scale["max"]
         ):
             raise ValueError(f"Invalid rating scale for {name}")
-        if rule["enabled"] and (scale is None or not rule["price_bands"]):
-            raise ValueError(f"Enabled rating rules require a scale and bands: {name}")
+        single = rule.get("min_rating")
+        if single is not None:
+            if rule["price_bands"]:
+                raise ValueError(f"Use either min_rating or price bands, not both: {name}")
+            if normalize_rating(single, scale) is None:
+                raise ValueError(f"Invalid minimum rating for {name}")
+        if rule["enabled"] and (scale is None or (single is None and not rule["price_bands"])):
+            raise ValueError(f"Enabled rating rules require a scale and a threshold: {name}")
         previous_end = None
         previous_inclusive = False
         for band in rule["price_bands"]:

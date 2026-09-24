@@ -23,22 +23,25 @@ def potential_candidate(
 ) -> bool:
     """A necessary-condition shortlist, never a fabricated eligible Offer."""
     if (
-        offer.country is None
-        or offer.departure_date is None
+        offer.departure_date is None
         or offer.number_of_days is None
         or offer.hotel_stars is None
         or offer.price_per_person is None
     ):
         return False
+    # `return_date` is not known yet at this shortlist stage, so the canonical
+    # nights-based bound (`filtering.matches()`'s authority once enrichment adds
+    # it) is translated into Rainbow's own native "dni" count (dni = nights + 1)
+    # for this necessary-condition check only.
+    min_nights, max_nights = filters["min_nights"], filters["max_nights"]
     if not (
         offer.currency == filters["currency"]
         and offer.number_of_people == filters["people"]
         and 0 < offer.price_per_person <= Decimal(filters["max_price"])
         and offer.departure_date >= today
-        and offer.hotel_stars
-        >= filters["country_min_stars"].get(offer.country, filters["min_stars"])
-        and offer.number_of_days >= filters["min_days"]
-        and (filters["max_days"] is None or offer.number_of_days <= filters["max_days"])
+        and offer.hotel_stars >= filters["min_stars"]
+        and (min_nights is None or offer.number_of_days >= min_nights + 1)
+        and (max_nights is None or offer.number_of_days <= max_nights + 1)
         and rating_matches(offer, filters["provider_ratings"])
     ):
         return False

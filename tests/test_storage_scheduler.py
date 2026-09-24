@@ -1,12 +1,14 @@
 import json
+import sqlite3
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from travel_deal_agent.config import Settings, load_settings
-from travel_deal_agent.models import Offer
+from travel_deal_agent.models import Offer, duplicate_key
 from travel_deal_agent.notifications import Notifier, deliver_pending
 from travel_deal_agent.providers.mock import MockProvider
 from travel_deal_agent.scheduler import Scheduler
@@ -22,10 +24,10 @@ class RecordingNotifier(Notifier):
 
 
 def test_new_offer_survives_restart(offer: Offer, store: Store, settings: Settings) -> None:
-    store.observe(offer, True, Decimal("100"))
+    store.observe(offer, True)
 
     with Store(settings.database) as reopened:
-        events = reopened.observe(offer, True, Decimal("100"))
+        events = reopened.observe(offer, True)
         snapshot = reopened.get_offer(offer.provider, offer.offer_id)
 
         assert events == []
@@ -36,28 +38,98 @@ def test_new_offer_survives_restart(offer: Offer, store: Store, settings: Settin
 
 
 def test_price_change_and_cumulative_drop(offer: Offer, store: Store) -> None:
-    store.observe(offer, True, Decimal("100"))
-    small_drop = replace(offer, price_per_person=Decimal("1249"))
-    assert store.observe(small_drop, True, Decimal("100")) == ["price_changed"]
+    # Arrange / Act / Assert: any drop below the lowest alerted price alerts,
+    # with no minimum drop amount; an unchanged or higher price never does.
+    assert store.observe(offer, True) == ["new_offer"]
+    small_drop = replace(offer, price_per_person=Decimal("1298"))
+    assert store.observe(small_drop, True) == ["price_changed", "price_drop"]
+    assert store.observe(small_drop, True) == []
+    assert store.observe(offer, True) == ["price_changed"]
+    assert store.observe(small_drop, True) == ["price_changed"]
     big_drop = replace(offer, price_per_person=Decimal("1199"))
-    assert store.observe(big_drop, True, Decimal("100")) == ["price_changed", "price_drop"]
-    assert store.observe(big_drop, True, Decimal("100")) == []
-    assert store.observe(offer, True, Decimal("100")) == ["price_changed"]
-    assert store.observe(big_drop, True, Decimal("100")) == ["price_changed"]
-    assert len(store.pending()) == 2
+    assert store.observe(big_drop, True) == ["price_changed", "price_drop"]
+    assert [n["kind"] for n in store.pending()] == ["new_offer", "price_drop", "price_drop"]
+    assert [n["previous_price"] for n in store.pending()] == [None, "1299", "1298"]
     assert store.price_history(offer.provider, offer.offer_id) == [
         Decimal("1299"),
-        Decimal("1249"),
-        Decimal("1199"),
+        Decimal("1298"),
         Decimal("1299"),
+        Decimal("1298"),
         Decimal("1199"),
     ]
 
 
+def test_unchanged_offer_is_not_realerted_on_later_hourly_scans(
+    offer: Offer, settings: Settings
+) -> None:
+    # Arrange: hourly scans of the same good offer, with the production re-arm window.
+    now = [datetime(2026, 9, 24, 7, tzinfo=timezone.utc)]
+    with Store(
+        settings.database, alert_rearm_after=settings.alert_rearm_after, clock=lambda: now[0]
+    ) as store:
+        # Act
+        events = []
+        for _ in range(48):
+            events.append(store.observe(offer, True))
+            now[0] += timedelta(hours=1)
+        # Assert
+        assert events[0] == ["new_offer"]
+        assert all(later == [] for later in events[1:])
+        assert len(store.pending()) == 1
+
+
+def test_offer_returning_after_the_rearm_window_alerts_again(
+    offer: Offer, settings: Settings
+) -> None:
+    # Arrange
+    now = [datetime(2026, 9, 24, 7, tzinfo=timezone.utc)]
+    rearm = timedelta(hours=24)
+    with Store(settings.database, alert_rearm_after=rearm, clock=lambda: now[0]) as store:
+        store.observe(offer, True)
+        # Act: the offer stops qualifying (still observed, but ineligible) for a while.
+        now[0] += timedelta(hours=1)
+        store.observe(offer, False)
+        now[0] += rearm - timedelta(hours=1, seconds=1)
+        early = store.observe(offer, True)
+        now[0] += rearm
+        returned = store.observe(offer, True)
+        again = store.observe(offer, True)
+        # Assert
+        assert early == []
+        assert returned == ["new_offer"]
+        assert again == []
+        assert [n["previous_price"] for n in store.pending()] == [None, None]
+
+
+def test_alert_state_from_an_older_database_is_upgraded(offer: Offer, settings: Settings) -> None:
+    # Arrange: the alert table as created before the re-arm column existed.
+    connection = sqlite3.connect(settings.database)
+    connection.execute(
+        "CREATE TABLE alert_state (group_key TEXT PRIMARY KEY, lowest_alert_price TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO alert_state VALUES (?, ?)", (duplicate_key(offer), str(offer.price_per_person))
+    )
+    connection.commit()
+    connection.close()
+    # Act
+    with Store(settings.database, alert_rearm_after=timedelta(hours=24)) as store:
+        repeated = store.observe(offer, True)
+        cheaper = store.observe(replace(offer, price_per_person=Decimal("1200")), True)
+    # Assert: the previously alerted offer is not re-announced; a better price is.
+    assert repeated == []
+    assert cheaper == ["price_changed", "price_drop"]
+
+
+def test_rearm_window_must_be_positive(settings: Settings) -> None:
+    with pytest.raises(ValueError, match="re-arm"):
+        Store(settings.database, alert_rearm_after=timedelta(0))
+
+
 def test_first_eligible_and_cross_provider_alert(offer: Offer, store: Store) -> None:
-    assert store.observe(offer, False, Decimal("100")) == []
-    assert store.observe(offer, True, Decimal("100")) == ["new_offer"]
-    assert store.observe(replace(offer, provider="other"), True, Decimal("100")) == []
+    assert store.observe(offer, False) == []
+    assert store.observe(offer, True) == ["new_offer"]
+    assert store.observe(replace(offer, provider="other"), True) == []
 
 
 def test_notification_retry(store: Store, offer: Offer) -> None:
@@ -66,7 +138,7 @@ def test_notification_retry(store: Store, offer: Offer) -> None:
         def send(self, notification: Notification) -> None:
             raise RuntimeError("Offline delivery failure")
 
-    store.observe(offer, True, Decimal("100"))
+    store.observe(offer, True)
     deliver_pending(store, FailingNotifier())
     assert len(store.pending()) == 1
     notifier = RecordingNotifier()
@@ -85,12 +157,12 @@ def test_scheduler_intervals_and_restart(settings: Settings, store: Store) -> No
         settings, providers={"mock": {**settings.providers["mock"], "enabled": True}}
     )
     scheduler = Scheduler(settings, [MockProvider()], store, notifier, clock=lambda: 1000)
-    assert len(scheduler.run_once()) == 2
-    assert len(notifier.sent) == 2
+    assert len(scheduler.run_once()) == 3
+    assert len(notifier.sent) == 3
     assert scheduler.run_once() == []
     restarted = Scheduler(settings, [MockProvider()], store, notifier, clock=lambda: 1600)
-    assert len(restarted.run_once()) == 2
-    assert len(notifier.sent) == 2
+    assert len(restarted.run_once()) == 3
+    assert len(notifier.sent) == 3
 
 
 def test_range_uses_injected_rng_deterministically(settings: Settings, store: Store) -> None:
@@ -250,7 +322,7 @@ def test_provider_failure_isolation_and_backoff(settings: Settings, store: Store
     scheduler = Scheduler(
         settings, [BrokenProvider(), MockProvider()], store, RecordingNotifier(), clock=lambda: 1000
     )
-    assert len(scheduler.run_once()) == 2
+    assert len(scheduler.run_once()) == 3
     assert store.run_state("broken") == {"next_run": 1200, "failures": 1}
     assert store.run_state("mock") == {"next_run": 1600, "failures": 0}
 
@@ -374,7 +446,7 @@ def test_unknown_enabled_provider(settings: Settings, store: Store) -> None:
 
 
 @pytest.mark.parametrize(
-    "field,value", [("min_days", 0), ("max_days", 1), ("max_price", "NaN"), ("people", 0)]
+    "field,value", [("min_nights", 0), ("max_nights", 0), ("max_price", "NaN"), ("people", 0)]
 )
 def test_invalid_config(
     settings: Settings,
@@ -391,4 +463,21 @@ def test_invalid_config(
     path.write_text(json.dumps(raw))
     monkeypatch.setenv("TDA_CONFIG", str(path))
     with pytest.raises(ValueError):
+        load_settings()
+
+
+def test_invalid_duration_range_rejected(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """min_nights > max_nights must be rejected, even though the production
+    config currently leaves both null (no duration limit)."""
+    from travel_deal_agent.config import ROOT
+
+    raw = json.loads((ROOT / "config.json").read_text())
+    raw["filters"]["min_nights"] = 10
+    raw["filters"]["max_nights"] = 5
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setenv("TDA_CONFIG", str(path))
+    with pytest.raises(ValueError, match="max_nights"):
         load_settings()

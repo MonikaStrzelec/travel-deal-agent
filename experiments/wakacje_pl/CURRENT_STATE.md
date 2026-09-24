@@ -1,37 +1,99 @@
-# Wakacje.pl — current state (handoff, 2026-09-22)
+# Wakacje.pl — current state (handoff, last updated 2026-09-24)
 
 **Read this file first.** It is the authoritative, up-to-date source of truth for
 Wakacje.pl. `RECONNAISSANCE.md` in this same directory is the detailed evidence
-log behind every claim here (§1-23) — consult it for exact URLs, HTTP statuses,
+log behind every claim here (§1-26) — consult it for exact URLs, HTTP statuses,
 and raw response fields, but treat *this* file as correct if the two ever
 disagree (this one is newer). `AGENTS.md` (repo root) has the workflow rules.
 The project-wide handoff at `experiments/rainbow_playwright/CURRENT_STATE.md`
 still covers ITAKA/Rainbow/TUI/notifications/roadmap — not duplicated here.
 
-**One-line status:** Wakacje.pl is implemented, tested, and **fully live-verified
-end to end for all four target airports together — LCJ, WAW, KTW, WRO**
-(RECONNAISSANCE.md §23: 14/14 requests, 81.01s, comfortably under
-`cycle_seconds=120`). The project owner has made the explicit decision to turn
-it on: **`enabled: true` in `config.json`**, `interval_seconds: 3600` (a full
-scan at most once an hour to start; deliberately conservative, revisit once
-observed live behavior supports a shorter interval). The provider is
-technically ready. **The scheduler has not been run yet** (no `--watch`, no
-24/7 run) — see §5 for the next step and one known test-suite side effect of
-this flip that still needs a follow-up.
+**One-line status (2026-09-24, RECONNAISSANCE.md §24-27):** Wakacje.pl now
+fetches **one confirmed combined search query** in a single URL — 4 airports
+(LCJ/WAW/KTW/WRO), flight only, board AI/HB/ZO/FB, min 3★, rating min 8.0,
+cheapest-first sort, per-person price view — instead of the old
+unfiltered-baseline-plus-per-airport flow. `do-1500zl` (the URL price cap seen
+in the human-confirmed search) is deliberately **excluded**: it matches
+robots.txt's `Disallow: /*?do-*` and is never sent; the business cap
+(`filters.max_price = 1500` PLN/person) is enforced client-side by
+`filtering.matches_criteria` exactly as before. Pagination: max 3 pages,
+`max_requests: 4` per cycle (robots + 3 pages), down from 14.
+
+**The scheduler HAS now been run** (2026-09-24, RECONNAISSANCE.md §27): one
+explicitly authorized, controlled `scheduler.run_once(force=True)` cycle with
+only Wakacje.pl enabled, real production DB writes and real Telegram delivery.
+Result: 4/4 requests, 30 raw offers fetched, **30/30 normalized (zero parser
+warnings this run)**, 8 matched `filtering.matches()`, all 8 saved to price
+history and **delivered as real Telegram `new_offer` alerts**. Real examples
+confirmed among the matches: Meridian at both 1389 PLN/os. (KTW) and 1393
+PLN/os. (WAW), Alion at 1479 PLN/os. (WAW), Pebbles Resort at 1497 PLN/os.
+(WMI) — matching what the project owner had found manually on the site.
+Full detail: §5.
 
 ---
 
-## 1. Current implementation state
+## 0. Business-rule update (2026-09-24, offline session, no live request)
+
+Supersedes the matching statements further down (§1, §3, §4, §6):
+
+- **Stars:** one rule for every country, `filters.min_stars = 3`.
+  `filters.country_min_stars` was removed from config, types, validation,
+  `filtering.matches_criteria` and Rainbow's enrichment shortlist.
+- **Countries:** no whitelist. The source carries no ISO code (only
+  `place.country.slug`, a Polish display name and an internal numeric id —
+  checked offline in the saved `__NEXT_DATA__`), so `COUNTRIES` remains an
+  evidence-only slug→ISO map for display. An unmapped country now yields
+  `country=None` **and is still eligible**; its source name is prepended to
+  `destination` (e.g. `"Malta / Wyspa Malta / St. Paul's Bay"`). A country that
+  *is* set must still be a two-letter uppercase code.
+- **Rating:** `provider_ratings["wakacje.pl"]` uses one price-independent
+  `min_rating: 8` (`price_bands: []`); the 7.0 (<1000 PLN) / 8.0 band pair is
+  gone. No rating filter is sent to the site: `ocena-7` exists in the sidebar
+  catalog (RECONNAISSANCE.md §11.3) but was never tested standalone nor
+  combined with an airport flag, so it is not used.
+- **Alerts:** `price_drop_pln` (used only for alert qualification — price
+  history records every change independently) was replaced by
+  `alert_rearm_hours: 24`. A qualifying offer group alerts once
+  (`new_offer`), then again on **any** drop below its lowest alerted price
+  (`price_drop`, no minimum amount), or as `new_offer` after it went
+  `alert_rearm_hours` without an eligible observation. An unchanged (or higher)
+  price in later hourly scans never re-alerts. Price increases do not alert
+  because alert state is grouped by `duplicate_key`, and alerting on every
+  change would ping-pong between two copies of the same trip priced differently.
+- **Sorting (`tanio`):** re-checked against this file, RECONNAISSANCE.md §11.3,
+  §12.4, §13b-c and the saved raw evidence (`data/wakacje-recon/`). Confirmed
+  live were only `?tanio` and `?str-2,tanio` **without** an airport flag, and
+  both returned only no-flight products (no `departurePlaceCode`). The shape
+  combining `tanio` with an airport flag was never found on any page and never
+  tested. **Not implemented** — the provider still uses the default
+  "Najpopularniejszych" order. Reaching cheaper flight offers needs one small,
+  separately authorized live check of a sort+airport shape first (e.g. whether
+  the site itself generates such a link on a `?z-lodzi` page).
+- `max_pages: 3` and `max_requests: 14` are unchanged.
+
+## 1. Current implementation state (§1-§4 below describe the PRE-§24 architecture; superseded where noted)
+
+**Superseded 2026-09-24 (RECONNAISSANCE.md §24-26):** the per-airport request
+flow this section originally described (unfiltered baseline + one paginated
+fetch per confirmed airport, 14 requests/cycle) has been replaced by one
+confirmed combined search query (all 4 airports + sort + filters in one URL,
+4 requests/cycle: `wakacje.py: CONFIRMED_SEARCH_QUERY`). The per-airport facts
+below (confirmed slugs, `CONFIRMED_AIRPORT_SLUGS`) remain true as a historical
+evidence record — those slugs are exactly the ones embedded in the new combined
+query — but they no longer drive separate requests. See RECONNAISSANCE.md §24-26
+for the full evidence trail and rationale.
 
 - **Base scope:** `/wczasy/` (the site's own general search — its search box
   literally reads "Dowolny kierunek lub hotel"), not `/lastminute/`. Confirmed
   materially broader (38,216 vs 23,577 matches at measurement time).
   `travel_deal_agent/providers/wakacje.py`, `LISTING_PATH`.
-- **Pagination:** implemented per confirmed airport, using the site's own
-  confirmed shape — page 1 is the bare `?<slug>`, pages 2+ are
-  `?str-<n>,<slug>` — bounded by `cfg.get("max_pages", 2)`, with a graceful
-  budget-exhaustion break (mirrors `itaka.py`). `config.json` sets
-  `max_pages: 3`. `wakacje.py: fetch()`.
+- **Pagination (superseded shape, same mechanism):** now `?<CONFIRMED_SEARCH_QUERY>`
+  for page 1, `?str-<n>,<CONFIRMED_SEARCH_QUERY>` for pages 2+ — the same
+  page-number-plus-filter comma shape as before, now carrying the whole
+  combined query instead of one airport slug — bounded by
+  `cfg.get("max_pages", 2)`, with a graceful budget-exhaustion break (mirrors
+  `itaka.py`). `config.json` sets `max_pages: 3`, `max_requests: 4`.
+  `wakacje.py: fetch()`.
 - **`price_is_complete` policy:** `price_is_complete` itself is **untouched**
   — still unconditionally `False` for every Wakacje.pl offer
   (`wakacje_data.normalize_offer`), for the same structural reason as always
@@ -83,32 +145,28 @@ this flip that still needs a follow-up.
   default like any other unlisted country — no new business rule added.
   **Malta was deliberately NOT added** — seen only as a display name on
   listing cards, never as a URL/slug (no raw evidence to map from).
-- **`config.json` (`providers["wakacje.pl"]`):**
+- **`config.json` (`providers["wakacje.pl"]`), current values (superseded
+  2026-09-24, RECONNAISSANCE.md §26):**
   ```json
   {"enabled": true, "interval_seconds": 3600, "max_pages": 3,
-   "max_requests": 14, "timeout_seconds": 15, "cycle_seconds": 120,
+   "max_requests": 4, "timeout_seconds": 15, "cycle_seconds": 120,
    "request_gap_seconds": 5}
   ```
-  `max_requests: 14` = robots(1) + baseline(1) + LCJ×3 + WAW×3 + KTW×3 +
-  WRO×3 (raised from `8` now that all four airports are confirmed and
-  queried; `max_pages` unchanged at `3`).
-  `cycle_seconds: 120` (raised from `60` — a live run of the real
-  `WakacjeProvider.fetch()` proved `60` is deterministically too small for a
-  full 14-request scan at `request_gap_seconds=5`: 13 mandatory gaps alone
-  cost `65s`, before any real HTTP time. See RECONNAISSANCE.md §21-§22 for
-  the exact failure and the fix; `tests/test_wakacje.py:
-  test_full_confirmed_scan_fits_within_the_configured_cycle_seconds` guards
-  this specific regression.
-  `filters["accept_incomplete_price_from"] = ["wakacje.pl"]`.
-- **`enabled: true`** (operational session F, same day) — an explicit,
+  `max_requests: 4` = robots(1) + 3 pages of the one confirmed combined
+  search query (lowered from `14`, which was robots + baseline + 4 airports
+  × 3 pages under the old per-airport architecture — see §26).
+  `cycle_seconds: 120` was originally raised from `60` under the old
+  14-request architecture (RECONNAISSANCE.md §21-§22) and left unchanged
+  since — comfortably sufficient for the new, much shorter 4-request scan
+  too (not re-derived down, since it was never a blocker at this lower
+  count). `filters["accept_incomplete_price_from"] = ["wakacje.pl"]`.
+- **`enabled: true`** (operational session F, 2026-09-22) — an explicit,
   separate decision by the project owner, made only after the full live
-  validation in §23. `interval_seconds` stays `3600`: a full scan is at most
-  once an hour to start, deliberately conservative (one full scan already
-  costs up to 14 requests over ~81s at `request_gap_seconds=5`); shortening
-  it is a later, separately-evaluated decision, not made here. **The
-  scheduler has still never been run** — no `--watch`, no 24/7 run, no live
-  Telegram message, no production SQLite write has happened for this
-  provider yet. See §5 for the next step.
+  validation in §23 (under the old architecture). **The scheduler HAS since
+  been run** (2026-09-24, one controlled `run_once(force=True)` cycle, real
+  DB writes, real Telegram delivery — RECONNAISSANCE.md §27; see the
+  one-line status above and §5 for full detail). Still no `--watch` / 24/7
+  unattended run.
 - **Quality gates, last run this cycle:** `pytest -q` → **1031 passed, 6
   failed**; `ruff check .` → clean; `ruff format --check .` → clean; `mypy` →
   clean (70 source files). **The 6 failures are a direct, expected
@@ -174,7 +232,7 @@ evidence); Bulgaria *was* added and is now covered.
 | 7 | customer rating | COVERED | `ratings.rating_matches`; `filters.provider_ratings["wakacje.pl"]` |
 | 8 | review count | **NOT COVERED** (deliberate) | `wakacje_data.normalize_offer`: `number_of_reviews=None` always — `ratingReservationCount` semantics never confirmed, never mapped. Not a hard filter for any provider, but zeroes the "reviews" ranking component for every Wakacje.pl offer. |
 | 9 | board/meal type | COVERED | `wakacje_data.SERVICE_BOARDS`; `filters.allowed_boards`; `boards.board_matches_price` |
-| 10 | stay length | COVERED | `filters.min_days`/`max_days`; `filtering.matches_criteria` |
+| 10 | stay length | COVERED | `filters.min_nights`/`max_nights` (nullable); `filtering.matches_criteria` |
 | 11 | dates | COVERED | `matches_criteria` (departure ≥ today); date/duration consistency validated at parse time |
 | 12 | country | **PARTIAL** | Mechanism is correct and fail-closed; `COUNTRIES` covers only 8 slugs today — everything else is deliberately unrecognized, not a bug |
 | 13 | region | COVERED (descriptive only, not filtered) | `destination` field |
@@ -188,40 +246,54 @@ evidence); Bulgaria *was* added and is now covered.
 | 21 | price history | COVERED | `storage.price_history`; `Store._save_price` |
 | 22 | ranking + Łódź bonus | COVERED, now active | same as #4 |
 
-## 5. Next step for the new session — start here
+## 5. Status and next step — updated 2026-09-24 after the first controlled scheduler run
 
-All four target airports are standalone live-confirmed (RECONNAISSANCE.md
-§21) and implemented (§1-§4). The `cycle_seconds` blocker found by the first
-full-provider live attempt is fixed and re-confirmed live (RECONNAISSANCE.md
-§22-§23): the final controlled live test completed **14/14 requests in
-81.01s**, comfortably under `cycle_seconds=120`, with all four confirmed
-airports queried together for the first time and each returning exclusively
-its own `departurePlaceCode`. That same scan surfaced one new, genuine raw
-country (`"cypr"`), now mapped (§1, RECONNAISSANCE.md §23). The project owner
-has since made the explicit decision to enable it: **`enabled: true`**,
-`interval_seconds: 3600` (§1).
+Superseded by RECONNAISSANCE.md §24-27 (this section previously described the
+old per-airport architecture as not-yet-run; both the architecture and that
+gap are now different — read this version, not any cached copy).
 
-**Two things before any real scheduler run:**
+**What happened, in order:** (a) the old per-airport architecture (§1-§4,
+14 requests/cycle) was live-validated end to end (RECONNAISSANCE.md §21-§23);
+(b) a real business problem surfaced — the project owner's own manual search
+found real, cheap, matching offers (Meridian, Alion, Pebbles Resort, Costa
+Malaga) that the old architecture's default "most popular" sort never
+reached; (c) a real, human-driven browser session plus one bounded,
+explicitly authorized live HTTP confirmation established a single combined
+search query that reaches those same offers directly, sorted cheapest-first
+(RECONNAISSANCE.md §24-25); (d) `wakacje.py`/`wakacje_data.py` were rewritten
+around that query, including a price-semantics fix (the query's `za-osobe`
+flag means `price` is now per-person directly, not a total to halve) — full
+test suite green throughout (RECONNAISSANCE.md §26); (e) one explicitly
+authorized, controlled `scheduler.run_once(force=True)` cycle ran only
+Wakacje.pl against the real site, real database and real Telegram — 4/4
+requests, 30/30 offers normalized with zero parser warnings, 8 matched and
+alerted, all real examples above confirmed present (RECONNAISSANCE.md §27).
 
-1. **Fix the 6 test failures caused by the `enabled: true` flip** (§1 has the
-   exact list and root cause — `Scheduler`'s own safety check correctly
-   rejecting test setups that assumed `wakacje.pl` would stay disabled in the
-   real config the shared `settings` fixture loads). This is ordinary
-   test-suite upkeep, not a functional bug in the provider or the scheduler;
-   it was left undone deliberately because the enabling session was scoped
-   to the config change only.
-2. **Run one normal, controlled run of the application with Wakacje.pl as an
-   active provider**, with DB writes, the notification outbox and Telegram
-   delivery all under deliberate control (matching how ITAKA/Rainbow/TUI were
-   each first brought live) — not `--watch`, not unattended 24/7, until that
-   controlled run's results are reviewed. This is the next real milestone;
-   nothing before it authorizes an unattended scheduler run.
+**Observed, not yet explained, not speculated on:** `departurePlaceCode ==
+"WMI"` (Warszawa-Modlin) appeared in the live results even though the
+confirmed query has no separate Modlin slug — only the collective
+`z-warszawy` flag (RECONNAISSANCE.md §25, §27). WMI is already a configured
+business airport (`filters.airports`), so this needed no code change to be
+handled correctly; noted here as observed behavior only, in case a future
+session wants to investigate *why* `z-warszawy` sometimes surfaces Modlin.
+
+**Not done in this session, left for later, not blocking:**
+1. The 6 test failures the `enabled: true` flip caused under the *old*
+   architecture (originally noted here) were already fixed as part of the
+   §26 rewrite — the full suite is green (1285 passed) with the new
+   architecture; not a separate remaining item.
+2. `--watch` / unattended 24/7 operation has still never been authorized or
+   run — every run so far has been one explicit, controlled cycle.
+3. The pre-existing `data/offers.sqlite3` was found to already contain
+   Wakacje.pl rows from 2026-09-22/23, predating this section's earlier claim
+   that "no production SQLite write has happened" — that earlier claim was
+   simply wrong (or referred to a different database file); not investigated
+   further this session, not a blocker.
 
 If a *future* live check ever surfaces something unexpected (redirect, mixed
-codes, error, CAPTCHA, a `departurePlaceCode` that doesn't match the
-requested airport, a new unmapped country, etc.) for any of the four
-airports: stop, report exactly what happened (mirroring the
-`z-warszawa-chopin` write-up in RECONNAISSANCE.md §17).
+codes, error, CAPTCHA, a `departurePlaceCode` that doesn't match an intended
+filter, a new unmapped country, etc.): stop, report exactly what happened
+(mirroring the `z-warszawa-chopin` write-up in RECONNAISSANCE.md §17).
 
 ## 6. Hard constraints (do not relax these without an explicit, separate decision)
 
@@ -236,9 +308,15 @@ airports: stop, report exactly what happened (mirroring the
 - **No mass crawling.** Every live session in this project's history has used
   the minimum number of requests needed to answer a specific question,
   announced individually.
-- **No `?tanio` in the MVP.** Confirmed dead end for our airport-based
-  criteria (§13c of RECONNAISSANCE.md) — cheapest-sorted results are
-  dominated by no-flight offers that would fail `RawOffer` validation anyway.
+- **`?tanio` (superseded 2026-09-24, RECONNAISSANCE.md §24-26):** §13c's
+  finding (cheapest-sorted results with no airport filter are dominated by
+  no-flight offers) is still true and unchanged for that isolated case, but no
+  longer means "never queried" — the confirmed combined query (§24) includes
+  `tanio` alongside all four confirmed airport filters and other business
+  filters at once, live-confirmed to return real, flight-priced, ascending-
+  sorted offers. The general rule stands: never combine `tanio` with an
+  airport filter (or anything else) beyond this one specific, live-confirmed
+  combined query — do not extrapolate to other ad hoc combinations.
 - **`price_is_complete` stays `False` for Wakacje.pl.** This is structural
   (no robots-compliant path to a confirmed booking total exists for this
   source), not a temporary gap. Do not attempt to make it `True`.
@@ -246,9 +324,9 @@ airports: stop, report exactly what happened (mirroring the
   (`filters["accept_incomplete_price_from"]`), never by weakening
   `filtering.matches()`'s check globally, and never by re-adding a
   price-completeness check to `storage.py` that duplicates that whitelist.
-- **An unrecognized country still fails closed** (`offer.country is None` →
-  rejected). Extending `COUNTRIES` is always additive and evidence-gated,
-  never a default-permissive fallback.
+- **Never guess an ISO code.** Extending `COUNTRIES` is always additive and
+  evidence-gated. Since §0 an unmapped country is *not* rejected — it keeps
+  `country=None` and shows the source's country name in `destination`.
 - **LCJ has the highest business/ranking priority** of all four target
   airports (`ranking.airport_groups`'s first, standalone group) — its coverage
   gap is now closed (§1-§4), and its ranking bonus is live.

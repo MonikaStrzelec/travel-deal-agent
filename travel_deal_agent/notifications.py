@@ -54,7 +54,10 @@ class UrllibTelegramTransport:
         self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
     def send_message(self, chat_id: str, text: str, timeout: float) -> None:
-        body = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+        # HTML parse mode: NotificationMessage.render() already HTML-escapes
+        # every piece of free text and only ever emits a single, well-formed
+        # <a href="..."> tag for the offer link -- never raw, unescaped markup.
+        body = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode("utf-8")
         request = Request(
             self._url,
             data=body,

@@ -311,8 +311,9 @@ passes: `experiments/wakacje_pl/RECONNAISSANCE.md`.
 - Stay length: **7–9 days**, currently and always enforced only by the shared
   `filtering.matches()`, regardless of what any single upstream source's own
   filters return (each provider's upstream range is a superset at best).
-- Minimum 3★; relevant African destinations (plus a handful of Eastern European
-  ones) require minimum 4★ — see `filters.country_min_stars` in `config.json`.
+- Minimum 3★ for every country (`filters.min_stars`); the former per-country 4★
+  overrides (`filters.country_min_stars`) were removed on 2026-09-24, and an
+  unmapped country no longer rejects an offer.
 - Board: AI / FB / HB (All Inclusive / 3 meals / 2 meals).
 - Rating + review count feed ranking/quality — never an undisclosed hard filter
   beyond what's explicitly configured per provider.
@@ -586,8 +587,10 @@ WhatsApp messages have been sent; no `WhatsAppNotifier` code exists yet.
   `Store.pending()`/`Store.mark_delivered()`, `notifications.deliver_pending()` —
   a notification is only marked delivered after a successful `Notifier.send()`,
   so a delivery failure retries next cycle without duplicating already-sent ones.
-- `alerts.classify_alert()`: pure function distinguishing `new_offer` vs.
-  `price_drop` (cumulative drop below the last alert baseline) vs. no alert.
+- `alerts.classify_alert()`: pure function distinguishing `new_offer` (first
+  eligibility, or returning after `alert_rearm_hours` without an eligible
+  observation) vs. `price_drop` (any drop below the lowest alerted price, no
+  minimum amount) vs. no alert (unchanged or higher price).
 - `Notifier` ABC + working `ConsoleNotifier` (alias `LogNotifier`).
 - `NotificationMessage` + `notification_id` — transport-independent message
   content, ready for a future channel.

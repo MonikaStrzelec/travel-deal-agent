@@ -83,7 +83,7 @@ def test_normalization_and_price_gate(
     assert not matches(offer, settings.filters)
     # Store.observe trusts its `eligible` argument (see its docstring); the real
     # pipeline only ever passes what matches() decided, which is False here.
-    assert store.observe(offer, False, Decimal("50")) == []
+    assert store.observe(offer, False) == []
     assert store.pending() == []
     assert store.get_offer("itaka", offer.offer_id) is not None
 

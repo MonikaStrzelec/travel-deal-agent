@@ -24,10 +24,10 @@ def test_price_boundary(offer: Offer, settings: Settings, price: str, expected: 
     [
         ("GR", 2, False),
         ("GR", 3, True),
-        ("EG", 3, False),
+        ("EG", 3, True),
         ("EG", 4, True),
-        ("TN", 3, False),
-        ("ZA", 4, True),
+        ("TN", 3, True),
+        ("ZA", 2, False),
     ],
 )
 def test_star_rules(
@@ -36,11 +36,11 @@ def test_star_rules(
     assert matches(replace(offer, country=country, hotel_stars=stars), settings.filters) is expected
 
 
-@pytest.mark.parametrize("country", ["EG", "TN", "ZA", "KE", "MA"])
-def test_all_african_destinations_require_four_stars(
+@pytest.mark.parametrize("country", ["EG", "TN", "ZA", "KE", "MA", "TR", "AL", "BG"])
+def test_former_four_star_countries_accept_three_stars(
     offer: Offer, settings: Settings, country: str
 ) -> None:
-    assert not matches(replace(offer, country=country, hotel_stars=3), settings.filters)
+    assert matches(replace(offer, country=country, hotel_stars=3), settings.filters)
 
 
 @pytest.mark.parametrize(
@@ -52,27 +52,40 @@ def test_airports(offer: Offer, settings: Settings, airport: str, expected: bool
 
 
 @pytest.mark.parametrize(
-    "days,expected",
+    "nights,expected",
     [
         (2, False),
         (3, False),
-        (6, False),
-        (7, True),
-        (9, True),
-        (10, False),
+        (5, False),
+        (6, True),
+        (8, True),
+        (9, False),
         (14, False),
         (90, False),
     ],
 )
-def test_duration(offer: Offer, settings: Settings, days: int, expected: bool) -> None:
-    assert matches(replace(offer, number_of_days=days), settings.filters) is expected
+def test_duration(offer: Offer, settings: Settings, nights: int, expected: bool) -> None:
+    """Stay length is the canonical `return_date - departure_date`, in nights --
+    never the provider-specific `number_of_days` (see `test_nights_are_computed_
+    from_dates_regardless_of_provider_convention` for the cross-provider proof)."""
+    candidate = replace(
+        offer,
+        return_date=offer.departure_date + timedelta(days=nights),  # type: ignore
+    )
+    assert matches(candidate, settings.filters) is expected
 
 
 def test_short_trip_rejected_even_with_best_price_and_rating(
     offer: Offer, settings: Settings
 ) -> None:
     assert not matches(
-        replace(offer, number_of_days=6, price_per_person=Decimal("100"), rating=10, hotel_stars=5),
+        replace(
+            offer,
+            return_date=offer.departure_date + timedelta(days=5),  # type: ignore
+            price_per_person=Decimal("100"),
+            rating=10,
+            hotel_stars=5,
+        ),
         settings.filters,
     )
 
@@ -87,17 +100,100 @@ def test_budget_is_per_person_for_two_travelers(offer: Offer, settings: Settings
 
 
 def test_optional_duration_limit(offer: Offer, settings: Settings) -> None:
-    filters: FilterConfig = {**settings.filters, "max_days": 14}
-    assert not matches(replace(offer, number_of_days=15), filters)
-    filters["max_days"] = None
-    assert matches(replace(offer, number_of_days=15), filters)
+    long_stay = replace(
+        offer,
+        return_date=offer.departure_date + timedelta(days=15),  # type: ignore
+    )
+    filters: FilterConfig = {**settings.filters, "min_nights": None, "max_nights": 14}
+    assert not matches(long_stay, filters)
+    filters["max_nights"] = None
+    assert matches(long_stay, filters)
+
+
+def test_no_duration_limits_allows_any_stay_length(offer: Offer, settings: Settings) -> None:
+    """The current business decision: stay length is unrestricted when both bounds
+    are null (production config.json), so a good 3-, 5-, 10- or 14-night deal must
+    still be found."""
+    filters: FilterConfig = {**settings.filters, "min_nights": None, "max_nights": None}
+    for nights in (3, 5, 10, 14):
+        candidate = replace(
+            offer,
+            return_date=offer.departure_date + timedelta(days=nights),  # type: ignore
+        )
+        assert matches(candidate, filters)
+
+
+@pytest.mark.parametrize(
+    "min_nights,max_nights,nights,expected",
+    [
+        (None, None, 3, True),
+        (None, None, 14, True),
+        (7, None, 6, False),
+        (7, None, 7, True),
+        (None, 10, 10, True),
+        (None, 10, 11, False),
+        (7, 10, 6, False),
+        (7, 10, 7, True),
+        (7, 10, 10, True),
+        (7, 10, 11, False),
+    ],
+)
+def test_nights_range_filter(
+    offer: Offer,
+    settings: Settings,
+    min_nights: int | None,
+    max_nights: int | None,
+    nights: int,
+    expected: bool,
+) -> None:
+    filters: FilterConfig = {**settings.filters, "min_nights": min_nights, "max_nights": max_nights}
+    candidate = replace(
+        offer,
+        return_date=offer.departure_date + timedelta(days=nights),  # type: ignore
+    )
+    assert matches(candidate, filters) is expected
+
+
+@pytest.mark.parametrize(
+    "provider,native_days",
+    [
+        # Wakacje.pl/TUI: number_of_days IS the night count.
+        ("wakacje.pl", 7),
+        ("tui", 7),
+        # ITAKA/Rainbow: number_of_days is the touroperator "dni" count, nights + 1.
+        ("itaka", 8),
+        ("rainbow", 8),
+    ],
+)
+def test_nights_are_computed_from_dates_regardless_of_provider_convention(
+    offer: Offer, settings: Settings, provider: str, native_days: int
+) -> None:
+    """01.10 -> 08.10 is 7 nights for every provider, even though each provider's
+    own `number_of_days` disagrees on what that span is called. Provider rating
+    rules are disabled here so only duration eligibility is under test."""
+    filters: FilterConfig = {
+        **settings.filters,
+        "min_nights": 7,
+        "max_nights": 7,
+        "provider_ratings": {
+            name: {"enabled": False, "scale": None, "price_bands": []}
+            for name in ("wakacje.pl", "tui", "itaka", "rainbow")
+        },
+    }
+    candidate = replace(
+        offer,
+        provider=provider,
+        departure_date=date(2026, 10, 1),
+        return_date=date(2026, 10, 8),
+        number_of_days=native_days,
+    )
+    assert matches(candidate, filters, today=date(2026, 1, 1))
 
 
 @pytest.mark.parametrize(
     "remove_field",
     [
         lambda o: replace(o, price_per_person=None),
-        lambda o: replace(o, country=None),
         lambda o: replace(o, departure_date=None),
         lambda o: replace(o, return_date=None),
         lambda o: replace(o, number_of_days=None),

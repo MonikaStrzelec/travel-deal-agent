@@ -58,7 +58,7 @@ class OfferPipeline:
             if matches(offer, self.settings.filters, today=self.today()):
                 accepted.append(offer)
             else:
-                self.store.observe(offer, False, self.settings.price_drop)
+                self.store.observe(offer, False)
         return accepted
 
     def finalize(self, offers: list[Offer]) -> list[Offer]:
@@ -92,7 +92,7 @@ class OfferPipeline:
                 provider_rating_max=scale["max"] if scale else None,
                 google_rating_max=self.settings.external_verification["scale"]["max"],
             )
-            for event in self.store.observe(offer, True, self.settings.price_drop):
+            for event in self.store.observe(offer, True):
                 logger.info(
                     "%s: %s/%s price=%s",
                     event,

@@ -49,9 +49,19 @@ class SearchPlan:
             raise ValueError("Rainbow currently supports two adults / one room / PLN only")
         if not filters["airports"] or not set(filters["airports"]) <= AIRPORT_LABELS.keys():
             raise ValueError("Unsupported Rainbow airport selection")
-        maximum = filters["max_days"]
-        if maximum is None or (filters["min_days"], maximum) not in DURATIONS:
-            raise ValueError("Rainbow duration must use an observed preset: 7-9, 10-13 or 14-17")
+        min_nights, max_nights = filters["min_nights"], filters["max_nights"]
+        if min_nights is None or max_nights is None:
+            raise ValueError(
+                "Rainbow requires an explicit min_nights and max_nights duration preset"
+            )
+        # Rainbow's own site counts stay length as "dni" (nights + 1); translate the
+        # canonical nights-based filter into that native encoding before matching one
+        # of Rainbow's three observed UI presets.
+        min_days_native, max_days_native = min_nights + 1, max_nights + 1
+        if (min_days_native, max_days_native) not in DURATIONS:
+            raise ValueError(
+                "Rainbow duration must use an observed preset in nights: 6-8, 9-12 or 13-16"
+            )
         if not filters["allowed_boards"] or not set(filters["allowed_boards"]) <= MEALS.keys():
             raise ValueError("Unsupported Rainbow meal option")
         rule = filters["provider_ratings"].get("rainbow")
@@ -69,8 +79,8 @@ class SearchPlan:
             tuple(filters["airports"]),
             star_options(filters["min_stars"]),
             tuple(filters["allowed_boards"]),
-            filters["min_days"],
-            maximum,
+            min_days_native,
+            max_days_native,
             budget,
             floor,
         )

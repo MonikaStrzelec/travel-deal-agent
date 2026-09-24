@@ -619,10 +619,12 @@ def test_local_costs_do_not_change_eligibility_or_price(
     assert matches(offer, settings.filters, today=date(2026, 9, 12))
     message = NotificationMessage(1, "new_offer", offer, None).render()
     if not costs:
-        assert "no data (does not mean no costs)" in message
+        # The confirmed booking total still renders its own "🧾" line;
+        # only a per-cost line must be absent when there are no local costs.
+        assert message.count("🧾") == 1
     else:
         assert costs[0].description in message
-        assert f"({costs[0].certainty})" in message
+        assert message.count("🧾") == 2
 
 
 @pytest.mark.parametrize(
@@ -700,7 +702,7 @@ def test_confirmation_preserves_history_and_alert_baseline(
     ):
         old.pop(key)
     legacy = TypeAdapter(Offer).validate_json(json.dumps(old))
-    store.observe(legacy, False, Decimal("100"))
+    store.observe(legacy, False)
     before = store.get_offer("itaka", legacy.offer_id)
     confirmed = confirm_detail(listing, fixture["listing"], detail_html(fixture))
     pipeline = OfferPipeline(settings, store, today=lambda: date(2026, 9, 12))
@@ -714,9 +716,9 @@ def test_confirmation_preserves_history_and_alert_baseline(
     assert store.price_history("itaka", legacy.offer_id) == [Decimal("1450")]
     assert len(store.pending()) == 1
     message = NotificationMessage.from_notification(store.pending()[0]).render()
-    assert "Local mandatory cost (approximate)" in message
+    assert "🧾" in message
     assert "30 USD" in message
-    assert "2900.00 PLN" in message
+    assert "2900 zł" in message
     assert after.local_mandatory_costs == confirmed.local_mandatory_costs
     # A genuine cumulative booking-price drop keeps the same variant and baseline.
     affordable(fixture, 1350)

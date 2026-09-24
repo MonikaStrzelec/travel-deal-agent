@@ -4,7 +4,6 @@ import json
 import sqlite3
 from dataclasses import replace
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -61,9 +60,15 @@ def test_registered_provider_without_a_rating_rule_defaults_to_disabled(
     assert "not-a-real-provider" not in settings.filters["provider_ratings"]
 
 
-def test_observation_rolls_back_when_alert_policy_fails(offer: Offer, store: Store) -> None:
-    with pytest.raises(ValueError, match="threshold"):
-        store.observe(offer, True, Decimal("0"))
+def test_observation_rolls_back_when_alert_policy_fails(
+    offer: Offer, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_policy(*args: object) -> None:
+        raise ValueError("alert policy failure")
+
+    monkeypatch.setattr("travel_deal_agent.storage.classify_alert", failing_policy)
+    with pytest.raises(ValueError, match="alert policy"):
+        store.observe(offer, True)
 
     assert store.get_offer(offer.provider, offer.offer_id) is None
     assert store.price_history(offer.provider, offer.offer_id) == []

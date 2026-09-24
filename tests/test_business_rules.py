@@ -1,4 +1,4 @@
-"""Independent business-rule examples, including configurable country overrides."""
+"""Independent business-rule examples, including the country-independent star rule."""
 
 from dataclasses import replace
 from decimal import Decimal
@@ -11,7 +11,8 @@ from travel_deal_agent.filtering import matches
 from travel_deal_agent.models import Offer
 from travel_deal_agent.ranking import score
 
-# Independent reference list: 54 African sovereign states, plus requested exceptions.
+# Independent reference list: 54 African sovereign states, the countries that
+# previously required 4 stars, and destinations that were never on any whitelist.
 COUNTRIES = [
     "DZ",
     "AO",
@@ -78,12 +79,18 @@ COUNTRIES = [
     "MD",
     "RS",
     "XK",
+    "MT",
+    "PT",
+    "IT",
+    "CY",
+    "GR",
+    "ES",
 ]
 
 
 @pytest.mark.parametrize("country", COUNTRIES)
-@pytest.mark.parametrize("stars,expected", [(3, False), (4, True)])
-def test_country_minimum(
+@pytest.mark.parametrize("stars,expected", [(2, False), (3, True), (4, True)])
+def test_three_stars_suffice_in_every_country(
     offer: Offer, settings: Settings, country: str, stars: int, expected: bool
 ) -> None:
     # Arrange
@@ -92,15 +99,37 @@ def test_country_minimum(
     assert matches(candidate, settings.filters) is expected
 
 
-def test_override_is_configuration(offer: Offer, settings: Settings) -> None:
+def test_no_country_specific_star_override_exists(settings: Settings) -> None:
+    # Arrange / Act / Assert
+    assert "country_min_stars" not in settings.filters
+    assert settings.filters["min_stars"] == 3
+
+
+def test_star_minimum_is_configuration(offer: Offer, settings: Settings) -> None:
     # Arrange
-    candidate = replace(offer, country="GR", hotel_stars=3)
+    candidate = replace(offer, country="EG", hotel_stars=3)
     # Act / Assert
     assert matches(candidate, settings.filters)
-    settings.filters["country_min_stars"]["GR"] = 4
+    settings.filters["min_stars"] = 4
     assert not matches(candidate, settings.filters)
-    settings.filters["country_min_stars"].pop("AL")
-    assert matches(replace(candidate, country="AL"), settings.filters)
+    assert not matches(replace(candidate, country="GR"), settings.filters)
+
+
+def test_unmapped_country_is_not_rejected(offer: Offer, settings: Settings) -> None:
+    # Arrange: a source country that no provider mapping knows yet.
+    candidate = replace(offer, country=None, hotel_stars=3)
+    # Act / Assert
+    assert matches(candidate, settings.filters)
+
+
+@pytest.mark.parametrize("country", ["gr", "GRC", "", "Malta"])
+def test_malformed_country_code_is_still_rejected(
+    offer: Offer, settings: Settings, country: str
+) -> None:
+    # Arrange
+    candidate = replace(offer, country=country)
+    # Act / Assert
+    assert not matches(candidate, settings.filters)
 
 
 @pytest.mark.parametrize(

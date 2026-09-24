@@ -801,9 +801,14 @@ anywhere. Per this project's convention, it was not tested.
 were self-transport/no-flight products (Czarnogóra, Włochy, Grecja, Bułgaria,
 Turcja, Sri Lanka, Polska) at 431-529 PLN/person — **none had a
 `departurePlaceCode`**, so none would even pass `RawOffer`'s airport-code
-regex validation. Same result on page 2 (§13b). **Decision:** `?tanio` is
-never queried by the provider — confirmed dead end for our airport-based
-business rules, not a coverage gap.
+regex validation. Same result on page 2 (§13b). **Decision at the time:**
+`?tanio` alone (no airport filter) is never queried by the provider —
+confirmed dead end for our airport-based business rules, not a coverage gap.
+**Superseded 2026-09-24 (§24-26):** this finding about the *isolated,
+airport-less* `?tanio` is still true and unchanged, but `tanio` is no longer
+categorically excluded from every request — it is now one component of the
+one confirmed combined query, which also carries the airport filters, and
+that combination was live-confirmed to return real, flight-priced offers.
 
 ### 13d. KTW — `z-katowic` provenance, precisely
 
@@ -1137,3 +1142,211 @@ No further live request was made while implementing this fix. No DB write, no
 Telegram message, no commit/push.
 
 Current, authoritative state: `CURRENT_STATE.md` §1-§5.
+
+## 24. Session (2026-09-24): sort+airport reconnaissance, offline then two bounded live GETs
+
+Narrow, bounded goal (project owner's explicit scope): does Wakacje.pl itself
+generate a legal, stable URL combining a confirmed departure-airport filter with
+cheapest-first sort -- the combination §13b/§0 left explicitly untested
+("`?tanio,z-wroclawia`... Never found, never guessed, never fetched").
+
+**First pass, offline + 1 airport-filtered listing fetch (`?z-lodzi`):** the
+site's own sort widget (`sidebarFiltersStore.sidebarFiltersData[0]`, type
+`"order"`) renders as a client-side `<select>`/`<option value="tanio">`, not a
+static `<a href>` -- scanning all 93 `href` attributes on the page found zero
+combining `z-lodzi` with any sort token. **Conclusion at that point: NOT
+confirmed** -- no site-generated combined URL was passively observable this way,
+and per this project's convention the combination was not guessed.
+
+**Second pass: real, human-driven browser evidence.** The project owner supplied
+a Playwright Codegen recording (headed browser, manual clicks, not automated
+scraping) plus screenshots of a real search: departure cities Katowice + Łódź +
+Warszawa + Wrocław, board types (AI/HB/ZO/FB), 3+ stars, rating 8.0+, price cap
+1500 PLN "średnia za osobę" (per person), sort "Najtańszych". The resulting,
+literally-observed URL:
+
+```
+https://www.wakacje.pl/wczasy/?do-1500zl,samolotem,all-inclusive,HB,ZO,FB,3-gwiazdkowe,ocena-8,z-katowic,z-lodzi,z-warszawy,z-wroclawia,tanio,za-osobe&src=fromFilters
+```
+
+**Offline check against this project's own `robots_policy` (no live request):**
+this exact URL is **blocked** -- `do-1500zl` matches `Disallow: /*?do-*` (the
+same rule that already ruled out price-range filtering in §8a.3). Stripping only
+that one token (`do-1500zl`) and re-checking: **allowed**, crawl-delay floor 0.0.
+
+**One explicitly authorized bounded live confirmation (2 requests: fresh
+robots.txt, then this exact stripped query):**
+
+```
+GET https://www.wakacje.pl/wczasy/?samolotem,all-inclusive,HB,ZO,FB,3-gwiazdkowe,ocena-8,z-katowic,z-lodzi,z-warszawy,z-wroclawia,tanio,za-osobe&src=fromFilters
+```
+
+`200`, 10 offers, strictly ascending price (1080-1546 PLN, i.e. 540-773 PLN/
+person under the site's own per-person view -- see §25), `departurePlaceCode`
+set `{KTW, WAW, WMI, WRO}` (LCJ did not appear in this particular 10-offer
+top-of-list sample -- not a contradiction, just this sample; the query itself
+does include `z-lodzi`). The embedded internal search request
+(`method: search.tripsSearch`) confirms this is real server-side filtering, not
+decorative: `departure: [2622,2654,278,256]` (four numeric city ids, matching
+the four selected cities), `minCategory: 30` (3.0 stars), `service: [1,2,5,6]`
+(AI/HB/ZO/FB), `sort: 1, order: 0` (cheapest, ascending), `pricePerPerson: true,
+totalPrice: false` (per-person view -- the reverse of every prior session's
+default, see §25). Total match count for this query: 11,842.
+
+A real, site-generated page-2 link was found directly on the fetched page (not
+guessed): `?str-2,<same query, minus &src=fromFilters>` -- the same
+page-number-plus-filter comma shape already established for single-airport
+pagination (§13b), now carrying the whole combined query. `robots_policy`'s
+`/*,*/ ` rule still does not match it, for the same reason as before (no `/`
+after any comma).
+
+Raw evidence saved to `data/wakacje-recon/` (gitignored): `robots-sort-recon.txt`,
+`wczasy-z-lodzi-sortrecon.html` (+ extracted `_next_data.json`),
+`robots-combo-recon.txt`, `wczasy-combo-recon.html` (+ extracted
+`_next_data.json`).
+
+**Conclusion:** the sort+airport combination §0/§13b left as "never found, never
+guessed, never fetched" is now confirmed real and robots-legal -- but only as
+part of this much larger, all-at-once combined query (all 4 airports + sort +
+board + stars + rating + price-view, minus the one illegal price-cap token),
+never as an isolated two-flag combination. This directly supersedes §9's
+"listing-only, per-airport" architecture recommendation -- see §26 (next
+section, implementation) and `CURRENT_STATE.md` for the current, authoritative
+state.
+
+## 25. Price semantics under `za-osobe`: confirmed to flip (per-person, not total)
+
+Every prior session's price-semantics conclusion (§8a.1: `price` is the total
+for the queried party) was established under the site's **default** view
+(`totalPrice: true, pricePerPerson: false`). The confirmed combined query
+deliberately includes `za-osobe` ("average per person"), which flips this: the
+internal search request embedded in §24's live fetch shows `pricePerPerson:
+true, totalPrice: false` -- the reverse.
+
+**Confirmed directly, not inferred:** the project owner's own screenshot of the
+real page (same manual session that produced the confirmed URL) showed prices
+explicitly labeled "średnia za osobę" -- 1108, 1389, 1393, 1479, 1497, 1500 zł.
+The live-fetched offers' raw `price` field matched these to within ordinary live
+price drift: 1080, 1389, 1393, 1452, 1479, 1488, 1497, 1499, 1507, 1546 (two
+values, 1389 and 1393 and 1479 and 1497, matched exactly). This is independent,
+two-source corroboration (screenshot + raw field) that `price` under this query
+is the per-person figure directly, not a total to be divided.
+
+New country evidence, incidental to this fetch: `place.country.slug == "malta"`
+appeared on a real offer (hotel "Luna Holiday Complex", Mellieha), the first time
+Malta was seen as an actual slug rather than only a display name (§16, §19
+previously declined to add it for exactly this reason) -- added to `COUNTRIES` as
+`"malta": "MT"`, same evidence standard as `"cypr"` (§23).
+
+New airport reach, also incidental: `departurePlaceCode == "WMI"` (Warszawa-
+Modlin) appeared on that same offer. WMI has no confirmed standalone single-flag
+slug (§8b.6 and every session since) and still does not -- but it is already a
+configured business airport (`filters.airports`), so this combined query
+reaches it for the first time without needing one, purely as a side effect of
+the `z-warszawy` "collective Warszawa" flag.
+
+## 26. Implementation session (2026-09-24): combined-query architecture replaces per-airport fetch
+
+Following §24-25's live confirmation, `wakacje.py`/`wakacje_data.py` were
+rewritten:
+
+- **Request flow:** one confirmed combined search query
+  (`CONFIRMED_SEARCH_QUERY`, §24's stripped URL, minus `do-1500zl`), paginated
+  up to `max_pages` using the confirmed `str-<n>,<query>` shape (§24) --
+  replacing the old flow (an unfiltered `/wczasy/` baseline plus one paginated
+  fetch per confirmed airport). The old per-airport `CONFIRMED_AIRPORT_SLUGS`
+  loop is gone; all four airports are now embedded in the one query.
+- **Request budget:** `config.json`'s `providers["wakacje.pl"].max_requests`
+  lowered `14 -> 4` (robots + 3 pages, `max_pages` unchanged at 3) -- a direct
+  consequence of one query replacing five separate ones. `cycle_seconds`
+  (`120`) was left unchanged as a conservative, already-more-than-sufficient
+  value; not re-derived from the new, much lower request count.
+- **Price semantics** (`wakacje_data.normalize_offer`): flipped per §25 --
+  `price_per_person = raw.price` directly, `total_price = price_per_person *
+  ASSUMED_PARTY_SIZE`, unconditionally, since this provider only ever fetches
+  the one confirmed query now.
+- **`COUNTRIES`** gained `"malta": "MT"` (§25).
+- **Known, accepted trade-off:** `parse_listing()` is now called without a
+  `requested_departure_airport`, since one combined fetch spans multiple
+  airports -- the per-offer "does the returned code match what I asked for"
+  cross-check the old per-airport flow had is not available for this query
+  (business eligibility is unaffected: `filtering.matches_criteria` still
+  checks `departure_airport` against `filters["airports"]` regardless).
+- **Known, accepted trade-off:** pagination beyond page 2 (`str-3,<query>` and
+  beyond) extrapolates the confirmed `str-2` shape, the same convention already
+  used (and never separately re-verified page-by-page) for the old
+  per-airport pagination.
+- Full quality gates green after the rewrite: `pytest -q` (1285 passed),
+  `ruff check .` clean, `ruff format --check .` clean, `mypy` clean (80 source
+  files, using the project's configured file set).
+- Zero further live requests made during the implementation session itself
+  (only the two requests recorded in §24). No commit/push.
+
+Current, authoritative state: `CURRENT_STATE.md` (updated alongside this
+section).
+
+## 27. First controlled scheduler run of the new architecture (2026-09-24)
+
+One explicitly authorized, controlled cycle: `scheduler.run_once(force=True)`
+with only Wakacje.pl enabled (every other provider force-disabled in-memory
+for this run only, `config.json` untouched), the real production database
+(`data/offers.sqlite3`) and the real configured notifier (Telegram). No
+`--watch`, no second cycle, no detail pages, no code/config changes during
+the run.
+
+**Requests:** 4/4 (`robots.txt` + the confirmed query's page 1/2/3), all
+passing `robots_policy`. **Fetch:** 30 raw offers (3 × 10), **30/30
+successfully normalized — zero parser warnings this run** (no duration
+mismatches, no unknown-country rejections, no schema errors). **Eligibility:**
+8 offers passed `filtering.matches()`; `finalize()`'s dedup collapsed nothing
+(all 8 already distinct `variant_identity`s). **Persistence:** +26
+`offers`/`price_history` rows for `wakacje.pl` (8 matched + several
+ineligible-but-observed), spot-checked directly against the database (not
+from memory) for one offer (Meridian, WAW, 1393 PLN/os.): stored `price`
+field is exactly `"1393"` in both `offers` and `price_history`, matching
+`Offer.price_per_person` exactly — no double-division anywhere in the actual
+persisted data. **Notifications:** 8 new `notifications` rows, all kind
+`new_offer`, all with a `delivered_at` timestamp within ~1s of creation — 8
+real Telegram messages sent and accepted by the Telegram API.
+
+**Real examples confirmed present among the 8 matches** (business-relevant,
+matching what the project owner found manually): Meridian (Bulgaria) at 1389
+PLN/os. (KTW) and 1393 PLN/os. (WAW); Alion (Albania) at 1479 PLN/os. (WAW);
+Pebbles Resort (Malta) at 1497 PLN/os. (WMI). Not present this specific run:
+Costa Malaga (~1108 PLN/os., real-time inventory turnover — the site's own
+top-10-cheapest sample shifts run to run, an already-established pattern in
+this project) and an exact Alion-at-1500 variant (closest present: 1488 and
+1499 PLN/os., same real-time drift). Empirically re-verified on the actual
+8 matches, not just assumed from the filter logic: zero offers over 1500
+PLN/person, zero offers with rating below 8.0, and 2 of the 8 matches are
+3★ hotels (Malta and an unmapped-country Croatia offer) — confirming no
+country-specific 4★ gate survived into the current filter set.
+
+**New country observed, not yet acted on:** raw `place.country.slug ==
+"chorwacja"` (Croatia) appeared on one matched offer, correctly normalized
+as `country=None` (fail-closed, per §0) with "Chorwacja" kept in
+`destination` — not added to `COUNTRIES` this session (no separate live
+confirmation of the slug beyond this one observation; adding it would need
+its own small, evidence-gated step later, same convention as every other
+`COUNTRIES` entry).
+
+**Observed, not investigated, not speculated on:** `departurePlaceCode ==
+"WMI"` (Warszawa-Modlin) appeared twice among the 8 matches even though the
+confirmed query has no separate Modlin slug (only the collective
+`z-warszawy` flag, §24-25). WMI is already a configured business airport, so
+this needed no code change to be handled correctly — noted here only as
+observed behavior for a possible future investigation, not a bug.
+
+**Pre-existing database state, noted not investigated:** before this run,
+`data/offers.sqlite3` already contained Wakacje.pl `price_history`/
+`notifications` rows dated 2026-09-22 and 2026-09-23 — meaning some earlier
+process already exercised the real scheduler against this provider before
+this session, contradicting this file's and `CURRENT_STATE.md`'s prior claim
+that "the scheduler has never been run." Left as an observation; not
+investigated further, not a blocker for this run's own conclusions.
+
+No further live requests were made while writing up this section. No
+code/config change, no commit/push.
+
+Current, authoritative state: `CURRENT_STATE.md` (updated alongside this
+section).
