@@ -16,6 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pydantic import TypeAdapter
 
 from .attractiveness import Attractiveness, classify_offer
+from .climate import typical_daytime_temperature
 from .config_types import AttractivenessConfig, RatingRule
 from .models import Offer
 from .storage import Notification
@@ -77,6 +78,23 @@ EVENT_LABELS_PL = {
     "new_offer": "NOWA",
     "price_drop": "SPADEK CENY",
 }
+
+# Locative case ("w maju"), indexed by `date.month - 1`. Used only for the
+# Climate V0 "sun" line -- see climate.py for what the temperature itself means.
+MONTHS_PL_LOCATIVE = (
+    "styczniu",
+    "lutym",
+    "marcu",
+    "kwietniu",
+    "maju",
+    "czerwcu",
+    "lipcu",
+    "sierpniu",
+    "wrześniu",
+    "październiku",
+    "listopadzie",
+    "grudniu",
+)
 
 # (emoji, Polish label) for each attractiveness.Attractiveness category. The
 # emoji here is the header's ONLY emoji -- it replaces the old fixed
@@ -336,6 +354,14 @@ class NotificationMessage:
             lines.append(f"📅 {_pl_date(offer.departure_date)}")
         elif offer.return_date is not None:
             lines.append(f"🛬 Powrót: {_pl_date(offer.return_date)}")
+
+        if offer.departure_date is not None:
+            temperature = typical_daytime_temperature(
+                offer.country, offer.destination, offer.departure_date.month
+            )
+            if temperature is not None:
+                month_name = MONTHS_PL_LOCATIVE[offer.departure_date.month - 1]
+                lines.append(f"☀️ Typowo w {month_name}: ok. {temperature}°C")
 
         lines.append("")
 
