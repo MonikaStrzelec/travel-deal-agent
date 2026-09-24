@@ -39,7 +39,7 @@ flowchart LR
 | `pipeline.py` | Filter, shortlist, enrich and persist observations |
 | `scheduler.py` | Per-source due times, retry backoff and injected clocks |
 | `active_hours.py` | Pure configurable local time-of-day window gating provider scans |
-| `alerts.py` | Pure new-offer, returning-offer and price-drop decisions |
+| `alerts.py` | Pure price-event decisions: new offer, returned, price drop, new historical low |
 | `storage.py` | SQLite snapshots, history, schedules and transactional outbox |
 | `notifications.py` | Delivery interface, Telegram Bot API notifier and local logging implementation |
 | `notification_content.py` | Transport-independent message content from persisted alert snapshots |
@@ -471,11 +471,14 @@ Jak to działa w praktyce:
 4. SQLite records all observations and queues new matching-trip alerts.
 5. Local logs report three alerts. Repeating the same check produces no duplicate alerts:
    an unchanged offer that is still present in the next scan is never re-sent.
-6. Any later drop below the lowest alerted price creates a price-drop notification; there is
-   no minimum drop amount. A higher price, or oscillation back to a previously alerted
-   price, does not.
+6. A later price drop against this exact offer's own previous observation, or against its
+   lowest price ever recorded, is a price event -- `price_drop` or `new_low` respectively (a
+   drop that is both is reported once, as `new_low`) -- once it clears the configured noise
+   floor (`price_drop_min_amount`/`price_drop_min_percent` in `config.json`: at least 50 PLN
+   or 5%, by default). A smaller drop, a higher price, or an unchanged price updates the
+   stored history but never queues a notification.
 7. An offer group that had no eligible observation for `alert_rearm_hours` (24 by default)
-   and then qualifies again is announced again as a new offer.
+   and then qualifies again is announced again, as a `returned` notification (not `new_offer`).
 
 Mock dates move daily; a different departure date represents a new trip. Single-check
 results contain offers from sources checked during that run, not a historical dashboard.
@@ -544,7 +547,8 @@ Messages contain hotel, country/region, per-person price, total for the actual p
 (currently two travelers), price per person per night, duration, airport, stars, native rating
 and scale, verified Google/Tripadvisor rating, board, offer URL, a typical daytime temperature for
 the departure month (Climate V0, see below), an attractiveness category (see
-below), and any price drop relative to the previous alert baseline. `final_score` is never shown
+below), and, for a `price_drop`/`new_low` event, the offer's own previous observed price and the
+drop amount. `final_score` is never shown
 in the message (it still drives internal sorting only). Missing information is explicit. If total
 price is missing but party size and per-person price are known, the derived total is marked
 `calculated`. Final score and rating-scale maxima are persisted in the offer/outbox JSON **after**
@@ -565,6 +569,33 @@ Example fictional message (compact Telegram format, `notification_content.Notifi
 🔗 Zobacz ofertę
 ℹ️ Cena z listingu — niepotwierdzona.
 ```
+
+### Price events
+
+Besides a genuinely new eligible offer, the same compact format also reports what happened to
+an already-known offer's price -- a *price event*, tracked independently of attractiveness
+(HOT/GOOD/MATCH still answers "is this offer good"; a price event answers "did something just
+happen to its price"). `alerts.classify_alert` picks at most one event per observation, with
+`new_low` taking priority over `price_drop` when a single drop is both (never two messages for
+one scan):
+
+| Header | Event | Meaning |
+| --- | --- | --- |
+| `🔥/👍/✓ NOWA` | `new_offer` | First eligible observation of this offer. |
+| `↩️ WRÓCIŁA` | `returned` | Eligible again after at least `alert_rearm_hours` with no eligible observation. |
+| `📉 SPADEK CENY` | `price_drop` | A meaningful drop from this offer's own previous observed price. |
+| `🏆 NAJNIŻSZA CENA` | `new_low` | A meaningful drop to a new lowest price ever recorded for this offer. |
+
+"Meaningful" is a configurable noise floor (`price_drop_min_amount`/`price_drop_min_percent` in
+`config.json`; 50 PLN or 5%, whichever is reached first, by default) -- a 1 PLN drop, or a new low
+that only beats the old one by a few PLN, updates the stored history silently instead of paging
+the project owner. A price increase is likewise recorded in history but never notified.
+
+An offer that disappears from a source is not currently detected or announced (`DISAPPEARED`):
+provider scans are staggered and independently retried on failure, so there is no safe "this
+source completed a full, successful scan" signal yet to tell a genuine disappearance apart from a
+transient miss (see `AGENTS.md`/project notes for the full reasoning). `returned` above only
+relies on the existing, already-safe per-offer re-arm window, not on scan completeness.
 
 ### Climate V0
 

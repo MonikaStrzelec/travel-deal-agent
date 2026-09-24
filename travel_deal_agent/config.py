@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from pydantic import TypeAdapter
 
 from .active_hours import validate_active_hours
+from .alerts import PriceDropThreshold
 from .attractiveness import validate_attractiveness_config
 from .boards import BOARD_ORDER, CANONICAL_BOARDS
 from .config_types import (
@@ -43,6 +44,7 @@ class Settings:
     scheduler: SchedulerConfig
     active_hours: ActiveHoursConfig
     attractiveness: AttractivenessConfig
+    price_drop_threshold: PriceDropThreshold
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,12 @@ def validate_options(raw: AppConfig) -> None:
     """Validate ranking, scheduling and external verification settings."""
     if type(raw["alert_rearm_hours"]) is not int or raw["alert_rearm_hours"] <= 0:
         raise ValueError("alert_rearm_hours must be a positive whole number of hours")
+    drop_amount = Decimal(raw["price_drop_min_amount"])
+    if not drop_amount.is_finite() or drop_amount < 0:
+        raise ValueError("price_drop_min_amount must be a nonnegative amount")
+    drop_percent = raw["price_drop_min_percent"]
+    if not math.isfinite(drop_percent) or not 0 <= drop_percent <= 1:
+        raise ValueError("price_drop_min_percent must be between 0 and 1")
     ranking = raw["ranking"]
     expected = {
         "price",
@@ -297,4 +305,7 @@ def load_settings() -> Settings:
         raw["scheduler"],
         raw["active_hours"],
         raw["attractiveness"],
+        PriceDropThreshold(
+            Decimal(raw["price_drop_min_amount"]), Decimal(str(raw["price_drop_min_percent"]))
+        ),
     )

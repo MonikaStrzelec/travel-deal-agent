@@ -74,9 +74,16 @@ AIRPORT_DISPLAY_LABELS_PL = {
     "WRO": "Wrocław",
 }
 
-EVENT_LABELS_PL = {
-    "new_offer": "NOWA",
-    "price_drop": "SPADEK CENY",
+# (emoji override, Polish label) per outbox `kind`. `new_offer` has no fixed
+# emoji of its own -- its header emoji is the attractiveness emoji below,
+# exactly like before this project tracked price history. The other three
+# events lead with their own fixed glyph instead, so they stay recognizable
+# in a Telegram feed regardless of the offer's attractiveness category.
+EVENT_LABELS_PL: dict[str, tuple[str | None, str]] = {
+    "new_offer": (None, "NOWA"),
+    "returned": ("↩️", "WRÓCIŁA"),
+    "price_drop": ("📉", "SPADEK CENY"),
+    "new_low": ("🏆", "NAJNIŻSZA CENA"),
 }
 
 # Locative case ("w maju"), indexed by `date.month - 1`. Used only for the
@@ -97,9 +104,10 @@ MONTHS_PL_LOCATIVE = (
 )
 
 # (emoji, Polish label) for each attractiveness.Attractiveness category. The
-# emoji here is the header's ONLY emoji -- it replaces the old fixed
-# event emoji entirely; the event itself (new offer vs. price drop) is
-# conveyed by EVENT_LABELS_PL alone.
+# label is always shown after the header's bullet; the emoji is only the
+# header's emoji for a `new_offer` (EVENT_LABELS_PL has no glyph of its own
+# for it) -- every other event leads with its own fixed emoji instead (see
+# EVENT_LABELS_PL), so the event stays recognizable regardless of category.
 ATTRACTIVENESS_LABELS_PL: dict[Attractiveness, tuple[str, str]] = {
     "HOT": ("🔥", "Szczególnie ciekawa"),
     "GOOD": ("👍", "Dobra oferta"),
@@ -280,8 +288,9 @@ class NotificationMessage:
         e = html.escape
         ratings = provider_ratings if provider_ratings is not None else {}
         breakdown = classify_offer(offer, ratings, attractiveness_config)
-        emoji, category_label = ATTRACTIVENESS_LABELS_PL[breakdown.category]
-        event_label = EVENT_LABELS_PL.get(self.kind, self.kind)
+        attractiveness_emoji, category_label = ATTRACTIVENESS_LABELS_PL[breakdown.category]
+        event_emoji, event_label = EVENT_LABELS_PL.get(self.kind, (None, self.kind))
+        emoji = event_emoji or attractiveness_emoji
 
         lines = [f"{emoji} {event_label} • {category_label}"]
 
@@ -335,8 +344,12 @@ class NotificationMessage:
             if per_night is not None:
                 price_line += f" • {per_night}"
             lines.append(price_line)
-            if self.kind == "price_drop" and self.previous_price is not None:
-                lines.append(f"📉 Poprzednio: {_pl_decimal(self.previous_price)} zł/os.")
+            if self.kind in ("price_drop", "new_low") and self.previous_price is not None:
+                drop = self.previous_price - offer.price_per_person
+                lines.append(
+                    f"📉 Było {_pl_decimal(self.previous_price)} zł/os. "
+                    f"• spadek {_pl_decimal(drop)} zł"
+                )
 
         if offer.departure_airport:
             airport_name = AIRPORT_DISPLAY_LABELS_PL.get(

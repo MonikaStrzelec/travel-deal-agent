@@ -79,7 +79,11 @@ def main() -> None:
         )
     )
     logging.info("Notifications: %s", "telegram" if telegram_config else "console")
-    store = Store(settings.database, alert_rearm_after=settings.alert_rearm_after)
+    store = Store(
+        settings.database,
+        alert_rearm_after=settings.alert_rearm_after,
+        price_drop_threshold=settings.price_drop_threshold,
+    )
     try:
         scheduler = Scheduler(
             settings,

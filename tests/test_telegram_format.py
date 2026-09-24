@@ -2,7 +2,7 @@
 the attractiveness-driven header (HOT/GOOD/MATCH)."""
 
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from travel_deal_agent.config import Settings
@@ -76,7 +76,7 @@ def test_match_new_offer_header(offer: Offer, store: Store, settings: Settings) 
     assert _render(store, settings).startswith("✓ NOWA • Spełnia kryteria")
 
 
-def test_price_drop_keeps_the_same_category_header_shape(
+def test_new_low_keeps_the_same_category_header_shape(
     offer: Offer, store: Store, settings: Settings
 ) -> None:
     candidate = _at_nights(
@@ -98,8 +98,67 @@ def test_price_drop_keeps_the_same_category_header_shape(
         settings.attractiveness, settings.filters["provider_ratings"]
     )
 
-    assert message.startswith("🔥 SPADEK CENY • Szczególnie ciekawa")
-    assert "📉 Poprzednio: 1000 zł/os." in message
+    assert message.startswith("🏆 NAJNIŻSZA CENA • Szczególnie ciekawa")
+    assert "📉 Było 1000 zł/os. • spadek 50 zł" in message
+
+
+def test_price_drop_keeps_the_same_category_header_shape(
+    offer: Offer, store: Store, settings: Settings
+) -> None:
+    # Isolate a drop that is not also a new historical low: the price had
+    # already gone lower once before, then climbed back up.
+    candidate = _at_nights(
+        replace(
+            offer,
+            provider="wakacje.pl",
+            rating=9.2,
+            hotel_stars=4,
+            departure_airport="WAW",
+            board_type="HB",
+            price_per_person=Decimal("1000"),
+        ),
+        6,
+    )
+    store.observe(candidate, True)
+    store.observe(replace(candidate, price_per_person=Decimal("800")), True)  # new low
+    store.observe(replace(candidate, price_per_person=Decimal("950")), True)  # back up; no alert
+    store.observe(replace(candidate, price_per_person=Decimal("900")), True)  # drop, not a new low
+
+    message = NotificationMessage.from_notification(store.pending()[-1]).render(
+        settings.attractiveness, settings.filters["provider_ratings"]
+    )
+
+    assert message.startswith("📉 SPADEK CENY • Szczególnie ciekawa")
+    assert "📉 Było 950 zł/os. • spadek 50 zł" in message
+
+
+def test_returned_keeps_the_same_category_header_shape(offer: Offer, settings: Settings) -> None:
+    now = [datetime(2026, 9, 24, 7, tzinfo=timezone.utc)]
+    candidate = _at_nights(
+        replace(
+            offer,
+            provider="wakacje.pl",
+            rating=9.2,
+            hotel_stars=4,
+            departure_airport="WAW",
+            board_type="HB",
+            price_per_person=Decimal("1000"),
+        ),
+        6,
+    )
+    with Store(
+        settings.database, alert_rearm_after=timedelta(hours=24), clock=lambda: now[0]
+    ) as store:
+        store.observe(candidate, True)
+        now[0] += timedelta(hours=25)
+        store.observe(candidate, True)
+
+        message = NotificationMessage.from_notification(store.pending()[-1]).render(
+            settings.attractiveness, settings.filters["provider_ratings"]
+        )
+
+    assert message.startswith("↩️ WRÓCIŁA • Szczególnie ciekawa")
+    assert "📉" not in message
 
 
 def test_wakacje_incomplete_price_shows_disclaimer(
