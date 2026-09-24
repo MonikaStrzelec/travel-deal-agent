@@ -15,7 +15,7 @@ from .rainbow_config import Limits, SearchPlan
 from .rainbow_data import parse_card
 from .rainbow_details import parse_selected_variant
 from .rainbow_enrichment import enrich_selected, potential_candidate
-from .rainbow_errors import RainbowError, RainbowStructureError
+from .rainbow_errors import RainbowError, RainbowStructureError, RainbowTimeout
 from .rainbow_nuxt import RainbowDetailError
 
 logger = logging.getLogger(__name__)
@@ -53,25 +53,39 @@ class RainbowProvider(Provider):
         analyzed = scrolls = index = 0
         previous_price = Decimal(0)
         observed = self.clock()
-        while analyzed < self.limits.max_analyzed_cards and len(offers) < self.limits.max_offers:
-            count = listing.count()
-            if index >= count:
-                if not count or scrolls >= self.limits.max_scrolls:
+        try:
+            while (
+                analyzed < self.limits.max_analyzed_cards and len(offers) < self.limits.max_offers
+            ):
+                count = listing.count()
+                if index >= count:
+                    if not count or scrolls >= self.limits.max_scrolls:
+                        break
+                    scrolls += 1
+                    if not listing.advance():
+                        break
+                    continue
+                analyzed += 1
+                offer = parse_card(listing.card_html(index), observed)
+                index += 1
+                assert offer.price_per_person is not None
+                if offer.price_per_person < previous_price:
+                    raise RainbowStructureError("Rainbow cards are not in ascending price order")
+                previous_price = offer.price_per_person
+                if previous_price > self.plan.max_price:
                     break
-                scrolls += 1
-                if not listing.advance():
-                    break
-                continue
-            analyzed += 1
-            offer = parse_card(listing.card_html(index), observed)
-            index += 1
-            assert offer.price_per_person is not None
-            if offer.price_per_person < previous_price:
-                raise RainbowStructureError("Rainbow cards are not in ascending price order")
-            previous_price = offer.price_per_person
-            if previous_price > self.plan.max_price:
-                break
-            offers.setdefault(offer.offer_id, offer)
+                offers.setdefault(offer.offer_id, offer)
+        except RainbowTimeout:
+            # A transient deadline mid-scan does not discard offers already
+            # collected; an empty result still propagates, since there is
+            # nothing valid to keep and a confirmed empty market is a
+            # different, already-covered case (see `advance()`'s own check).
+            if not offers:
+                raise
+            logger.warning(
+                "Rainbow scan deadline reached; keeping %s candidates collected so far",
+                len(offers),
+            )
         logger.info(
             "Rainbow scan complete: %s candidates, %s analyzed cards, %s scrolls",
             len(offers),
@@ -83,34 +97,46 @@ class RainbowProvider(Provider):
     def _enrich(self, listing: Listing, offers: list[Offer]) -> list[Offer]:
         attempts = confirmed = 0
         result: list[Offer] = []
-        for offer in offers:
-            if attempts >= self.limits.max_detail_requests or not potential_candidate(
-                offer,
-                self.filters,
-                offer.found_at.date(),
-            ):
-                result.append(offer)
-                continue
+        for position, offer in enumerate(offers):
             try:
-                evidence = listing.evidence(offer)
-                if evidence is None:
-                    offer = replace(
-                        offer, price_verification_reason="No matching structured listing evidence"
-                    )
-                elif potential_candidate(offer, self.filters, offer.found_at.date(), evidence):
-                    attempts += 1
-                    variant = parse_selected_variant(
-                        listing.detail_html(evidence.url),
-                        expected_product_key=evidence.product_key,
-                        expected_opaque_key=evidence.opaque_key,
-                        expected_birth_dates=evidence.birth_dates,
-                    )
-                    offer = enrich_selected(offer, evidence, variant)
-                    confirmed += 1
-            except RainbowDetailError as exc:
-                logger.warning("Rainbow variant remains unverified: %s", exc)
-                offer = replace(offer, price_verification_reason=str(exc))
-            result.append(offer)
+                if attempts >= self.limits.max_detail_requests or not potential_candidate(
+                    offer,
+                    self.filters,
+                    offer.found_at.date(),
+                ):
+                    result.append(offer)
+                    continue
+                try:
+                    evidence = listing.evidence(offer)
+                    if evidence is None:
+                        offer = replace(
+                            offer,
+                            price_verification_reason="No matching structured listing evidence",
+                        )
+                    elif potential_candidate(offer, self.filters, offer.found_at.date(), evidence):
+                        attempts += 1
+                        variant = parse_selected_variant(
+                            listing.detail_html(evidence.url),
+                            expected_product_key=evidence.product_key,
+                            expected_opaque_key=evidence.opaque_key,
+                            expected_birth_dates=evidence.birth_dates,
+                        )
+                        offer = enrich_selected(offer, evidence, variant)
+                        confirmed += 1
+                except RainbowDetailError as exc:
+                    logger.warning("Rainbow variant remains unverified: %s", exc)
+                    offer = replace(offer, price_verification_reason=str(exc))
+                result.append(offer)
+            except RainbowTimeout:
+                # A transient deadline during detail enrichment keeps every
+                # already-processed offer plus the remaining ones unenriched,
+                # instead of discarding the whole batch.
+                logger.warning(
+                    "Rainbow enrichment deadline reached; keeping %s offer(s) unenriched",
+                    len(offers) - position,
+                )
+                result.extend(offers[position:])
+                break
         logger.info(
             "Rainbow details: %s attempted, %s configurations confirmed", attempts, confirmed
         )

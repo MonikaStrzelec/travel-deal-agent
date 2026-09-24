@@ -4,7 +4,7 @@ A local Python application for finding travel deals that match a configurable bu
 trip length, departure airport and hotel-quality criteria. It remembers prices and
 avoids repeating alerts for the same trip.
 
-**Status:** offline mock by default, with opt-in ITAKA booking-price checks (manual `--force`, or continuous `--watch` once deliberately enabled), an enabled and live-tested Wakacje.pl listing provider (HTTP-only, no Playwright), and a disabled-by-default Rainbow browser listing provider, which stays CLI-rejected under `--watch`. Unverified variants remain diagnostic. TUI and Google are not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
+**Status:** offline mock by default, with opt-in ITAKA booking-price checks (manual `--force`, or continuous `--watch` once deliberately enabled), an enabled and live-tested Wakacje.pl listing provider (HTTP-only, no Playwright), and a Rainbow browser listing provider that is **blocked by source policy** (`r.pl/robots.txt` disallows the `/szukaj` search path the production flow needs) and stays disabled and CLI-rejected under `--watch`. Unverified variants remain diagnostic. TUI and Google are not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
 
 ## Problem and approach
 
@@ -514,7 +514,8 @@ registry remains extensible to other agencies. Implement only one real provider 
 complete its adapter tests, normalization checks, failure handling and controlled integration
 verification before adding the next. ITAKA is the first provider under development.
 TUI rating scales and thresholds must be verified and configured before activation;
-no scale or rating policy is assumed for TUI at this stage.
+no scale or rating policy is assumed for TUI at this stage. **Rainbow is blocked by
+source policy, not by implementation status** -- see "Rainbow listing provider" below.
 
 ### Notification channels and content
 
@@ -539,26 +540,57 @@ official or unofficial, is implemented or planned. Any future `DiscordNotifier` 
 Detection, price history and outbox retry logic require no transport-specific changes.
 The current outbox represents one selected transport, not simultaneous multi-channel delivery.
 
-Messages contain hotel, country/region, agency, per-person price, total for the actual party
-(currently two travelers), duration, airport, stars, native rating and scale, verified Google
-rating, board, offer URL, final weighted score, and any price drop relative to the previous
-alert baseline. Missing information is explicit. If total price is missing but party size
-and per-person price are known, the derived total is marked `calculated`.
-Final score and rating-scale maxima are persisted in the offer/outbox JSON **after** optional
-enrichment, so retries retain the original evaluation. Score is a weighted sum, not a percentage.
-Older snapshots remain readable and show unavailable score or unknown scale instead of guessing.
+Messages contain hotel, country/region, per-person price, total for the actual party
+(currently two travelers), price per person per night, duration, airport, stars, native rating
+and scale, verified Google/Tripadvisor rating, board, offer URL, an attractiveness category (see
+below), and any price drop relative to the previous alert baseline. `final_score` is never shown
+in the message (it still drives internal sorting only). Missing information is explicit. If total
+price is missing but party size and per-person price are known, the derived total is marked
+`calculated`. Final score and rating-scale maxima are persisted in the offer/outbox JSON **after**
+optional enrichment, so retries retain the original evaluation. Older snapshots remain readable
+and show unavailable score or unknown scale instead of guessing.
 
-Example fictional message excerpt:
+Example fictional message (compact Telegram format, `notification_content.NotificationMessage.render`):
 
 ```text
-Hotel: Demo Hotel
-Travel agency: ITAKA
-Price per person: 1299.00 PLN
-Total for 2 travelers: 2598.00 PLN
-Agency rating: 5.3/6
-Google rating: not available
-Final score: 5.250
+🔥 NOWA • Szczególnie ciekawa
+🏨 Meridian ★★★★ • Bułgaria • Słoneczny Brzeg
+⭐ 8,0/10 🍽 Śniadania i obiadokolacje (HB)
+💰 1393 zł/os. (2786 zł / 2 osoby) • 199 zł/os./noc
+🛫 Warszawa • 8 dni / 7 nocy
+📅 18.05 (wtorek) – 25.05.2027 (wtorek)
+
+🔗 Zobacz ofertę
+ℹ️ Cena z listingu — niepotwierdzona.
 ```
+
+### Attractiveness classification (V0)
+
+`attractiveness.py` answers "is this offer good on its own, right now" -- a small,
+presentation-only classification shown in the message header, completely independent of
+`ranking.score`/`Offer.final_score` (which remains the existing internal sort order,
+untouched, and never shown to the recipient). It is computed fresh from the `Offer` on every
+render; it is never written to `Offer`, never persisted to SQLite, and never affects
+`filtering.matches()` -- an offer must already be eligible before it is classified.
+
+Four independent areas, each reduced to a simple level instead of a 0-100 score:
+
+| Area | strong | normal | weak/neutral |
+| --- | --- | --- | --- |
+| VALUE (`price_per_person_per_night`, canonical nights only) | ≤ 170 PLN | ≤ 220 PLN | above 220 PLN |
+| HOTEL QUALITY (normalized provider rating; stars are a tie-breaker only) | ≥ 85% of scale | ≥ 75% of scale | below 75% (never lowered by missing reviews) |
+| AIRPORT | LCJ | WAW, WMI | KTW, WRO, ... (neutral, not a penalty) |
+| BOARD | AI, UAI | FB, HB | ZO, ... (neutral, not a penalty) |
+
+Final category: `strong_count` = areas at `strong`; `weak_count` = areas at `weak` (AIRPORT/BOARD
+never contribute to `weak_count`). 🔥 **HOT** needs `strong_count >= 2` and `weak_count == 0` (a
+single strong area -- e.g. LCJ alone -- is never enough). 👍 **GOOD** needs `strong_count >= 1`
+and `weak_count <= 1`. ✓ **MATCH** is everything else that already passed eligibility.
+
+All thresholds live in `config.json`'s `attractiveness` section (validated by
+`attractiveness.validate_attractiveness_config`) and are meant to be retuned once more real,
+cross-provider data exists -- these V0 values are calibrated on the 8 real eligible Wakacje.pl
+offers available at the time of writing, not on a larger or more diverse sample.
 
 - **Source integration:** investigate permitted official APIs/feeds before implementing
   one live adapter. Add timeouts, request budgets, fixtures and caching. Never bypass CAPTCHA.
@@ -774,6 +806,17 @@ Google or Tripadvisor verification has been performed.
 
 ## Rainbow listing provider
 
+**Status: BLOCKED BY SOURCE POLICY. Implementation prepared offline; do not enable.**
+`r.pl/robots.txt` explicitly disallows the `/szukaj?` path, and that path is required
+by the production Rainbow flow when filters are applied. This project does not bypass
+`robots.txt`, does not run Playwright against a disallowed path, and does not call
+undocumented internal APIs as a workaround. `providers.rainbow.enabled` must stay
+`false` until this is reconsidered. The code below is retained (not deleted) so the
+adapter is ready to enable without rework if the source's robots policy changes or a
+documented, allowed access path (e.g. an official API or a permitted listing path)
+becomes available. Until then, no live Rainbow run -- manual or scheduled -- is
+authorized.
+
 Rainbow is registered under `rainbow` and disabled by default. It uses a fresh,
 bounded Chromium session, normalizes listing cards into `Offer`, then leaves filtering,
 ranking, SQLite history, scheduling and notifications to the existing application.
@@ -781,13 +824,21 @@ The production adapter has been tested offline only; the earlier browser POC sup
 locator evidence, not proof that this new adapter passes a live end-to-end check.
 
 `filters` is the single business-policy source: PLN 1500/person, five configured
-airports, 7–9 days, minimum 3 stars, HB/FB/AI, and Rainbow rating at least 5.0/6.
-The POC's PLN 2000 cap is not used. Two adults, no children, one room and unrestricted
-dates are verified from the fresh search state. The current browser translation
-supports the five observed airport labels, 7–9 / 10–13 / 14–17 day presets, minimum
-3/4/5 stars and HB/FB/AI/BB meal controls. Unsupported options fail configuration
-rather than silently weakening criteria. Native rating bands are reapplied by the
-shared filters; the browser selects an available floor no stricter than those bands.
+airports, no stay-length restriction, minimum 3 stars, HB/FB/AI, and Rainbow rating
+at least 5.0/6. The POC's PLN 2000 cap is not used. Two adults, no children, one room
+and unrestricted dates are verified from the fresh search state. The current browser
+translation supports the five observed airport labels, minimum 3/4/5 stars, and
+HB/FB/AI/BB meal controls. When both `min_nights`/`max_nights` are configured, they
+must translate to one of the three observed day presets (7–9 / 10–13 / 14–17 dni);
+when both are `null` (the current business rule), Rainbow's own duration filter is
+left untouched, which already means every length. Airport and star selections that
+are not fully supported fail configuration rather than silently weakening criteria;
+a configured board with no confirmed Rainbow checkbox (for example "ZO", added to
+the shared list for ITAKA) is simply not selected there instead of blocking Rainbow
+entirely -- `filtering.matches_criteria` remains the acceptance authority, and
+Rainbow's own board mapping has no way to produce that board regardless. Native
+rating bands are reapplied by the shared filters; the browser selects an available
+floor no stricter than those bands.
 
 Rainbow star codes are explicit: 3 → `6`, 4 → `8`, 5 → `10`. A minimum selects every
 supported checkbox at or above it, through associated labels with checked-state
@@ -817,7 +868,12 @@ no progress. It does not paginate, visit offer details or relax filters. An expl
 empty listing returns `[]` normally: the scheduler resets failure backoff and schedules
 the normal interval, without an immediate retry. Browser failures, timeouts, changed
 structure and access blocks raise separate Rainbow exception types and are logged at
-the source boundary. SQLite errors remain outside that boundary.
+the source boundary. SQLite errors remain outside that boundary. A scan deadline
+reached mid-collection or mid-enrichment, after at least one offer was already
+collected, keeps those offers instead of discarding the whole cycle; a deadline
+reached before any offer is collected still fails the cycle, since there is nothing
+valid to keep. Access blocks and structural errors never trigger this partial-result
+path and always fail the whole cycle, with no automatic retry.
 
 Listing-only Rainbow records deliberately have `price_is_complete=false` and
 `variant_verified=false`. Total price is a diagnostic `price_per_person × 2` estimate,

@@ -16,7 +16,9 @@ from travel_deal_agent.ranking import score
 from travel_deal_agent.storage import Store
 
 
-def test_full_message_contains_offer_details(offer: Offer, store: Store) -> None:
+def test_full_message_contains_offer_details(
+    offer: Offer, store: Store, settings: Settings
+) -> None:
     candidate = replace(
         offer,
         provider="itaka",
@@ -29,15 +31,19 @@ def test_full_message_contains_offer_details(offer: Offer, store: Store) -> None
     )
     store.observe(candidate, True)
 
-    message = NotificationMessage.from_notification(store.pending()[0]).render()
+    message = NotificationMessage.from_notification(store.pending()[0]).render(
+        settings.attractiveness, settings.filters["provider_ratings"]
+    )
 
     for expected in (
-        "✈️ NOWA OFERTA",
+        # LCJ (strong airport) + itaka rating 5.3/6 = 86% (strong hotel quality)
+        # -- two strong areas, no weak one -- is exactly the HOT combination.
+        "🔥 NOWA • Szczególnie ciekawa",
         "🏨 Sunny Demo ★★★ • Grecja • Crete",
         "⭐ 5,3/6 (Google: 4,4/5)",
         "🍽 all_inclusive",
-        "💰 1299 zł/os. (2598 zł / 2 osoby)",
-        "🛫 Wylot: Łódź (LCJ) • 7 dni / 6 nocy",
+        "💰 1299 zł/os. (2598 zł / 2 osoby) • 217 zł/os./noc",
+        "🛫 Łódź • 7 dni / 6 nocy",
         '<a href="https://example.invalid/offers/0">Zobacz ofertę</a>',
     ):
         assert expected in message
@@ -99,7 +105,7 @@ def test_price_drop_message_shows_previous_price(offer: Offer, store: Store) -> 
 
     message = NotificationMessage.from_notification(store.pending()[-1]).render()
 
-    assert "📉 SPADEK CENY" in message
+    assert "SPADEK CENY" in message
     assert "💰 1199 zł/os." in message
     assert "📉 Poprzednio: 1299 zł/os." in message
 
@@ -133,7 +139,7 @@ def test_incomplete_price_gets_a_short_disclaimer_under_the_link(
 
     message = NotificationMessage.from_notification(store.pending()[0]).render()
 
-    assert "ℹ️ Cena z listingu — niepotwierdzona przy rezerwacji." in message
+    assert "ℹ️ Cena z listingu — niepotwierdzona." in message
     link_index = message.index("Zobacz ofertę")
     disclaimer_index = message.index("niepotwierdzona")
     assert disclaimer_index > link_index

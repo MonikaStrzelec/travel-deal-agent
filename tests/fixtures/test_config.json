@@ -169,6 +169,25 @@
       "max": 5
     }
   },
+  "attractiveness": {
+    "value": {
+      "strong_max_price_per_person_per_night": "170",
+      "normal_max_price_per_person_per_night": "220"
+    },
+    "hotel_quality": {
+      "strong_min_normalized_rating": 0.85,
+      "normal_min_normalized_rating": 0.75
+    },
+    "airport": {
+      "strong": ["LCJ"],
+      "normal": ["WAW", "WMI"]
+    },
+    "board": {
+      "strong": ["AI", "UAI"],
+      "normal": ["FB", "HB"],
+      "neutral": ["ZO"]
+    }
+  },
   "alert_rearm_hours": 24,
   "scheduler": {
     "max_backoff_exponent": 5,

@@ -38,8 +38,8 @@ class SearchPlan:
     airports: tuple[str, ...]
     stars: tuple[int, ...]
     boards: tuple[str, ...]
-    min_days: int
-    max_days: int
+    min_days: int | None
+    max_days: int | None
     max_price: Decimal
     rating_floor: int | None
 
@@ -50,19 +50,33 @@ class SearchPlan:
         if not filters["airports"] or not set(filters["airports"]) <= AIRPORT_LABELS.keys():
             raise ValueError("Unsupported Rainbow airport selection")
         min_nights, max_nights = filters["min_nights"], filters["max_nights"]
-        if min_nights is None or max_nights is None:
-            raise ValueError(
-                "Rainbow requires an explicit min_nights and max_nights duration preset"
-            )
-        # Rainbow's own site counts stay length as "dni" (nights + 1); translate the
-        # canonical nights-based filter into that native encoding before matching one
-        # of Rainbow's three observed UI presets.
-        min_days_native, max_days_native = min_nights + 1, max_nights + 1
-        if (min_days_native, max_days_native) not in DURATIONS:
-            raise ValueError(
-                "Rainbow duration must use an observed preset in nights: 6-8, 9-12 or 13-16"
-            )
-        if not filters["allowed_boards"] or not set(filters["allowed_boards"]) <= MEALS.keys():
+        min_days_native: int | None
+        max_days_native: int | None
+        if min_nights is None and max_nights is None:
+            # No stay-length restriction: leave Rainbow's own duration filter
+            # untouched. Its default query state before any duration control is
+            # touched is "dlugoscPobytu=*-*" (see rainbow_browser.py `prepare()`),
+            # i.e. every length -- exactly the unrestricted behaviour requested.
+            min_days_native = max_days_native = None
+        elif min_nights is None or max_nights is None:
+            raise ValueError("Rainbow requires both min_nights and max_nights, or neither")
+        else:
+            # Rainbow's own site counts stay length as "dni" (nights + 1); translate the
+            # canonical nights-based filter into that native encoding before matching one
+            # of Rainbow's three observed UI presets.
+            min_days_native, max_days_native = min_nights + 1, max_nights + 1
+            if (min_days_native, max_days_native) not in DURATIONS:
+                raise ValueError(
+                    "Rainbow duration must use an observed nights preset: 6-8, 9-12 or 13-16"
+                )
+        # Only the meal options Rainbow's own UI can select are used to narrow the
+        # search; a shared board (e.g. "ZO") that Rainbow has no confirmed checkbox
+        # for is simply not selected there -- `filtering.matches_criteria` remains
+        # the acceptance authority and Rainbow's own board mapping (`boards.py`,
+        # no "rainbow" entry in `_PROVIDER_CODES`) can never produce that board
+        # anyway, so this narrows nothing a real Rainbow offer could satisfy.
+        supported_boards = tuple(b for b in filters["allowed_boards"] if b in MEALS)
+        if not supported_boards:
             raise ValueError("Unsupported Rainbow meal option")
         rule = filters["provider_ratings"].get("rainbow")
         budget = Decimal(filters["max_price"])
@@ -78,7 +92,7 @@ class SearchPlan:
         return cls(
             tuple(filters["airports"]),
             star_options(filters["min_stars"]),
-            tuple(filters["allowed_boards"]),
+            supported_boards,
             min_days_native,
             max_days_native,
             budget,

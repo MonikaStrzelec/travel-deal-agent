@@ -97,6 +97,48 @@ class ExternalConfig(TypedDict):
     scale: RatingScale
 
 
+class ValueThresholds(TypedDict):
+    """PLN amounts as strings, like every other monetary config value (Decimal-exact)."""
+
+    strong_max_price_per_person_per_night: str
+    normal_max_price_per_person_per_night: str
+
+
+class HotelQualityThresholds(TypedDict):
+    """Fractions of the provider's own rating scale (0-1), not native rating units."""
+
+    strong_min_normalized_rating: float
+    normal_min_normalized_rating: float
+
+
+class AirportTiers(TypedDict):
+    """Airports absent from both lists are `neutral` -- an allowed airport, not a penalty."""
+
+    strong: list[str]
+    normal: list[str]
+
+
+class BoardTiers(TypedDict):
+    """Canonical boards absent from every list are `neutral` (e.g. a future allowed board)."""
+
+    strong: list[str]
+    normal: list[str]
+    neutral: list[str]
+
+
+class AttractivenessConfig(TypedDict):
+    """V0 thresholds for the presentation-only HOT/GOOD/MATCH classification.
+
+    Independent of `RankingConfig`/`Offer.final_score` (the existing internal
+    sort order) -- see `attractiveness.py`.
+    """
+
+    value: ValueThresholds
+    hotel_quality: HotelQualityThresholds
+    airport: AirportTiers
+    board: BoardTiers
+
+
 class SchedulerConfig(TypedDict):
     max_backoff_exponent: int
     idle_poll_seconds: int
@@ -128,3 +170,4 @@ class AppConfig(TypedDict):
     scheduler: SchedulerConfig
     active_hours: ActiveHoursConfig
     alert_rearm_hours: int
+    attractiveness: AttractivenessConfig
