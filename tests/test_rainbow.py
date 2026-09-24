@@ -314,6 +314,55 @@ def test_configured_defaults_are_production_not_diagnostic(settings: Settings) -
     assert not settings.providers["rainbow"]["enabled"]
 
 
+def test_search_plan_supports_unrestricted_duration(settings: Settings) -> None:
+    # Arrange: no stay-length restriction is the current business rule (config.json).
+    filters = deepcopy(settings.filters)
+    filters["min_nights"] = None
+    filters["max_nights"] = None
+
+    # Act.
+    plan = SearchPlan.from_filters(filters)
+
+    # Assert: Rainbow's own duration radio is left untouched (its default query
+    # state, "dlugoscPobytu=*-*", already means every length).
+    assert plan.min_days is None and plan.max_days is None
+
+
+def test_search_plan_rejects_partial_duration_bounds(settings: Settings) -> None:
+    # Arrange: one bound set without the other is not an observed Rainbow preset.
+    filters = deepcopy(settings.filters)
+    filters["min_nights"] = 6
+    filters["max_nights"] = None
+
+    # Act / assert.
+    with pytest.raises(ValueError, match="both min_nights and max_nights"):
+        SearchPlan.from_filters(filters)
+
+
+def test_search_plan_uses_only_confirmed_meal_options(settings: Settings) -> None:
+    # Arrange: "ZO" is a shared board (added for ITAKA) that Rainbow has no
+    # confirmed meal checkbox for -- narrow to what Rainbow can actually select
+    # rather than failing configuration for every other provider's sake.
+    filters = deepcopy(settings.filters)
+    filters["allowed_boards"] = ["HB", "FB", "AI", "ZO"]
+
+    # Act.
+    plan = SearchPlan.from_filters(filters)
+
+    # Assert.
+    assert set(plan.boards) == {"HB", "FB", "AI"}
+
+
+def test_search_plan_rejects_meal_options_with_no_rainbow_support(settings: Settings) -> None:
+    # Arrange.
+    filters = deepcopy(settings.filters)
+    filters["allowed_boards"] = ["UAI"]
+
+    # Act / assert.
+    with pytest.raises(ValueError, match="Unsupported Rainbow meal option"):
+        SearchPlan.from_filters(filters)
+
+
 def test_missing_review_count_is_optional() -> None:
     # Arrange.
     html = HTML.replace(", 44 opinie", "").replace("<span>(44 opinie)</span>", "")
@@ -343,6 +392,24 @@ def test_descending_cards_are_not_silently_accepted(settings: Settings) -> None:
     # Act / assert.
     with pytest.raises(RainbowStructureError, match="ascending"):
         provider(settings, listing).fetch()
+
+
+def test_scan_deadline_after_progress_keeps_already_collected_offers(settings: Settings) -> None:
+    # Arrange: the deadline strikes on the second card read, after the first
+    # one already contributed a valid result.
+    class FlakyListing(FakeListing):
+        def card_html(self, index: int) -> str:
+            if index >= 1:
+                raise RainbowTimeout("Rainbow scan deadline exceeded")
+            return super().card_html(index)
+
+    listing = FlakyListing([card(0), card(1)])
+
+    # Act.
+    result = provider(settings, listing).fetch()
+
+    # Assert: the offer read before the deadline is kept, not discarded.
+    assert len(result) == 1 and listing.closed
 
 
 @pytest.mark.parametrize(
@@ -392,6 +459,24 @@ def test_shared_filters_reject_site_policy_violations(settings: Settings) -> Non
         replace(complete, board_type="BB"),
     ):
         assert not matches(bad, settings.filters, NOW.date())
+
+
+def test_enrichment_deadline_keeps_offers_unenriched_instead_of_discarding_them(
+    settings: Settings,
+) -> None:
+    # Arrange: the shortlist reaches detail, but the deadline strikes during
+    # the evidence lookup, before any detail request is made.
+    class TimingOutListing(FakeListing):
+        def evidence(self, offer: Offer) -> ListingEvidence | None:
+            raise RainbowTimeout("Rainbow scan deadline exceeded")
+
+    listing = TimingOutListing([card()])
+
+    # Act.
+    result = provider(settings, listing).fetch()
+
+    # Assert: the raw, unenriched offer survives instead of the whole fetch failing.
+    assert len(result) == 1 and not result[0].variant_verified
 
 
 def test_pipeline_persists_unverified_quotes_without_alerts(

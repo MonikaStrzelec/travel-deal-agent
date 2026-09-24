@@ -8,14 +8,16 @@ escaped with `html.escape` first, so a hotel name or destination containing
 """
 
 import html
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import TypeAdapter
 
+from .attractiveness import Attractiveness, classify_offer
+from .config_types import AttractivenessConfig, RatingRule
 from .models import Offer
-from .providers.rainbow_config import AIRPORT_LABELS
 from .storage import Notification
 
 # Polish display names for the ISO codes this project's providers can produce.
@@ -59,9 +61,31 @@ WEEKDAYS_PL = (
     "niedziela",
 )
 
-KIND_LABELS_PL = {
-    "new_offer": "✈️ NOWA OFERTA",
-    "price_drop": "📉 SPADEK CENY",
+# Compact display labels for this message, deliberately separate from
+# rainbow_config.AIRPORT_LABELS (which mirrors labels actually observed on
+# Rainbow's own site, e.g. "Warszawa Chopin", and must not be repurposed for
+# unrelated presentation elsewhere).
+AIRPORT_DISPLAY_LABELS_PL = {
+    "LCJ": "Łódź",
+    "WAW": "Warszawa",
+    "WMI": "Warszawa Modlin",
+    "KTW": "Katowice",
+    "WRO": "Wrocław",
+}
+
+EVENT_LABELS_PL = {
+    "new_offer": "NOWA",
+    "price_drop": "SPADEK CENY",
+}
+
+# (emoji, Polish label) for each attractiveness.Attractiveness category. The
+# emoji here is the header's ONLY emoji -- it replaces the old fixed
+# event emoji entirely; the event itself (new offer vs. price drop) is
+# conveyed by EVENT_LABELS_PL alone.
+ATTRACTIVENESS_LABELS_PL: dict[Attractiveness, tuple[str, str]] = {
+    "HOT": ("🔥", "Szczególnie ciekawa"),
+    "GOOD": ("👍", "Dobra oferta"),
+    "MATCH": ("✓", "Spełnia kryteria"),
 }
 
 
@@ -131,6 +155,31 @@ def _pl_date(value: date) -> str:
     return f"{value.strftime('%d.%m.%Y')} ({WEEKDAYS_PL[value.weekday()]})"
 
 
+def _pl_date_short(value: date, *, with_year: bool) -> str:
+    pattern = "%d.%m.%Y" if with_year else "%d.%m"
+    return f"{value.strftime(pattern)} ({WEEKDAYS_PL[value.weekday()]})"
+
+
+def _pl_date_range(departure: date, return_date: date) -> str:
+    """One line for both dates. The year is shown on the departure date too
+    only when it differs from the return year, so a same-year trip (the
+    common case) is not cluttered with a repeated year."""
+    same_year = departure.year == return_date.year
+    return (
+        f"{_pl_date_short(departure, with_year=not same_year)} – "
+        f"{_pl_date_short(return_date, with_year=True)}"
+    )
+
+
+def _price_per_person_per_night(price_per_person: Decimal, nights: int | None) -> str | None:
+    """Canonical nights only (`return_date - departure_date`); fails safe (no
+    division) when nights is unknown or non-positive rather than guessing."""
+    if nights is None or nights <= 0:
+        return None
+    per_night = (price_per_person / nights).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return f"{_pl_decimal(per_night)} zł/os./noc"
+
+
 def _compact_destination(destination: str | None) -> str | None:
     """Collapse "Region / Region" (region == city) to one part; keep distinct
     parts, comma-joined -- never invents or drops real place information."""
@@ -184,8 +233,20 @@ class NotificationMessage:
             else None,
         )
 
-    def render(self) -> str:
+    def render(
+        self,
+        attractiveness_config: AttractivenessConfig | None = None,
+        provider_ratings: Mapping[str, RatingRule] | None = None,
+    ) -> str:
         """Render one compact message, in Polish, for the console or Telegram.
+
+        The header's category (HOT/GOOD/MATCH) is computed fresh from the
+        current `offer` via `attractiveness.classify_offer` every time this
+        is called -- it is never read from a stored field. Callers that do
+        not care about calibrated classification (most existing tests) may
+        omit both config arguments and get the built-in V0 defaults; the
+        production entry point (`__main__.py`) always passes the real,
+        configured values through `Notifier`.
 
         `final_score` and Tripadvisor rating are deliberately never shown here
         (they still drive ranking/eligibility elsewhere -- only the message
@@ -199,8 +260,12 @@ class NotificationMessage:
         """
         offer = self.offer
         e = html.escape
+        ratings = provider_ratings if provider_ratings is not None else {}
+        breakdown = classify_offer(offer, ratings, attractiveness_config)
+        emoji, category_label = ATTRACTIVENESS_LABELS_PL[breakdown.category]
+        event_label = EVENT_LABELS_PL.get(self.kind, self.kind)
 
-        lines = [KIND_LABELS_PL.get(self.kind, self.kind), ""]
+        lines = [f"{emoji} {event_label} • {category_label}"]
 
         hotel = [e(offer.hotel_name) if offer.hotel_name else "Hotel nieznany"]
         if offer.hotel_stars is not None:
@@ -213,26 +278,32 @@ class NotificationMessage:
             hotel.append(e(destination))
         lines.append(f"🏨 {' • '.join(hotel)}")
 
+        rating_part = None
         if offer.rating is not None:
-            rating_line = f"⭐ {f'{offer.rating:.1f}'.replace('.', ',')}"
+            rating_part = f"⭐ {f'{offer.rating:.1f}'.replace('.', ',')}"
             if offer.provider_rating_max is not None:
-                rating_line += f"/{_pl_number(offer.provider_rating_max)}"
+                rating_part += f"/{_pl_number(offer.provider_rating_max)}"
             for source in dict.fromkeys(["google", "tripadvisor", *offer.hotel_ratings]):
                 verified = _verified_external_rating(offer, source)
                 if verified is None:
                     continue
                 v_rating, v_max = verified
                 label = EXTERNAL_SOURCE_LABELS.get(source, source.capitalize())
-                rating_line += (
+                rating_part += (
                     f" ({label}: {f'{v_rating:.1f}'.replace('.', ',')}/{_pl_number(v_max)})"
                 )
-            lines.append(rating_line)
-
+        board_part = None
         if offer.board_type:
             board_label = BOARD_LABELS_PL.get(offer.board_type, offer.board_type)
-            lines.append(f"🍽 {e(board_label)}")
+            board_part = f"🍽 {e(board_label)}"
+        if rating_part or board_part:
+            lines.append(" ".join(part for part in (rating_part, board_part) if part))
 
-        lines.append("")
+        nights = (
+            (offer.return_date - offer.departure_date).days
+            if offer.departure_date is not None and offer.return_date is not None
+            else None
+        )
 
         if offer.price_per_person is not None:
             price_line = f"💰 {_pl_decimal(offer.price_per_person)} zł/os."
@@ -242,31 +313,37 @@ class NotificationMessage:
                 total = offer.price_per_person * people
             if total is not None and people is not None:
                 price_line += f" ({_pl_decimal(total)} zł / {people} {_pl_people(people)})"
+            per_night = _price_per_person_per_night(offer.price_per_person, nights)
+            if per_night is not None:
+                price_line += f" • {per_night}"
             lines.append(price_line)
             if self.kind == "price_drop" and self.previous_price is not None:
                 lines.append(f"📉 Poprzednio: {_pl_decimal(self.previous_price)} zł/os.")
 
-        lines.append("")
-
         if offer.departure_airport:
-            airport_name = AIRPORT_LABELS.get(offer.departure_airport, offer.departure_airport)
-            departure_line = f"🛫 Wylot: {e(airport_name)} ({e(offer.departure_airport)})"
+            airport_name = AIRPORT_DISPLAY_LABELS_PL.get(
+                offer.departure_airport, offer.departure_airport
+            )
+            departure_line = f"🛫 {e(airport_name)}"
             stay_length = _stay_length(offer)
             if stay_length is not None:
                 departure_line += f" • {stay_length}"
             lines.append(departure_line)
 
-        if offer.departure_date is not None:
+        if offer.departure_date is not None and offer.return_date is not None:
+            lines.append(f"📅 {_pl_date_range(offer.departure_date, offer.return_date)}")
+        elif offer.departure_date is not None:
             lines.append(f"📅 {_pl_date(offer.departure_date)}")
-        if offer.return_date is not None:
+        elif offer.return_date is not None:
             lines.append(f"🛬 Powrót: {_pl_date(offer.return_date)}")
 
+        lines.append("")
+
         if offer.url:
-            lines.append("")
             lines.append(f'🔗 <a href="{e(offer.url)}">Zobacz ofertę</a>')
 
         if not offer.price_is_complete:
-            lines.append("ℹ️ Cena z listingu — niepotwierdzona przy rezerwacji.")
+            lines.append("ℹ️ Cena z listingu — niepotwierdzona.")
 
         if offer.booking_total_price is not None:
             lines.append(

@@ -3,11 +3,13 @@
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .config import TelegramConfig
+from .config_types import AttractivenessConfig, RatingRule
 from .notification_content import NotificationMessage
 from .storage import Notification, Store
 
@@ -25,8 +27,17 @@ class Notifier(ABC):
 class ConsoleNotifier(Notifier):
     """Local logging transport; never contacts any external messaging service."""
 
+    def __init__(
+        self,
+        attractiveness_config: AttractivenessConfig | None = None,
+        provider_ratings: Mapping[str, RatingRule] | None = None,
+    ) -> None:
+        self._attractiveness_config = attractiveness_config
+        self._provider_ratings = provider_ratings
+
     def send(self, notification: Notification) -> None:
-        logger.info("%s", NotificationMessage.from_notification(notification).render())
+        message = NotificationMessage.from_notification(notification)
+        logger.info("%s", message.render(self._attractiveness_config, self._provider_ratings))
 
 
 # Preserve the public name used by existing integrations and tests.
@@ -94,15 +105,20 @@ class TelegramNotifier(Notifier):
         config: TelegramConfig,
         transport: TelegramTransport | None = None,
         timeout: float = 10.0,
+        attractiveness_config: AttractivenessConfig | None = None,
+        provider_ratings: Mapping[str, RatingRule] | None = None,
     ) -> None:
         if not config.bot_token or not config.chat_id:
             raise ValueError("Telegram notifier requires a bot token and chat id")
         self._chat_id = config.chat_id
         self._transport = transport or UrllibTelegramTransport(config.bot_token)
         self._timeout = timeout
+        self._attractiveness_config = attractiveness_config
+        self._provider_ratings = provider_ratings
 
     def send(self, notification: Notification) -> None:
-        text = NotificationMessage.from_notification(notification).render()
+        message = NotificationMessage.from_notification(notification)
+        text = message.render(self._attractiveness_config, self._provider_ratings)
         if len(text) > TELEGRAM_MESSAGE_LIMIT:
             text = text[: TELEGRAM_MESSAGE_LIMIT - 1] + "…"
         self._transport.send_message(self._chat_id, text, self._timeout)

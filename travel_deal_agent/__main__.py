@@ -66,7 +66,18 @@ def main() -> None:
             ),
         ],
     )
-    notifier: Notifier = TelegramNotifier(telegram_config) if telegram_config else ConsoleNotifier()
+    provider_ratings = settings.filters["provider_ratings"]
+    notifier: Notifier = (
+        TelegramNotifier(
+            telegram_config,
+            attractiveness_config=settings.attractiveness,
+            provider_ratings=provider_ratings,
+        )
+        if telegram_config
+        else ConsoleNotifier(
+            attractiveness_config=settings.attractiveness, provider_ratings=provider_ratings
+        )
+    )
     logging.info("Notifications: %s", "telegram" if telegram_config else "console")
     store = Store(settings.database, alert_rearm_after=settings.alert_rearm_after)
     try:

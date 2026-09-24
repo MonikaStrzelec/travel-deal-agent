@@ -12,10 +12,12 @@ from dotenv import load_dotenv
 from pydantic import TypeAdapter
 
 from .active_hours import validate_active_hours
+from .attractiveness import validate_attractiveness_config
 from .boards import BOARD_ORDER, CANONICAL_BOARDS
 from .config_types import (
     ActiveHoursConfig,
     AppConfig,
+    AttractivenessConfig,
     ExternalConfig,
     FilterConfig,
     ProviderConfig,
@@ -40,6 +42,7 @@ class Settings:
     external_verification: ExternalConfig
     scheduler: SchedulerConfig
     active_hours: ActiveHoursConfig
+    attractiveness: AttractivenessConfig
 
 
 @dataclass(frozen=True)
@@ -239,6 +242,7 @@ def validate_options(raw: AppConfig) -> None:
     ):
         raise ValueError("Invalid scheduler timing settings")
     validate_active_hours(raw["active_hours"])
+    validate_attractiveness_config(raw["attractiveness"])
 
 
 def load_settings() -> Settings:
@@ -292,4 +296,5 @@ def load_settings() -> Settings:
         raw["external_verification"],
         raw["scheduler"],
         raw["active_hours"],
+        raw["attractiveness"],
     )

@@ -213,11 +213,14 @@ class BrowserListing:
             self.check(self.page.get_by_role("checkbox", name=STAR_LABELS[star], exact=True))
             self.expected["standardHotelu"].append(STAR_CODES[star])
             self.ready()
-        self.check(
-            self.page.get_by_role("radio", name=DURATIONS[plan.min_days, plan.max_days], exact=True)
-        )
-        self.expected["dlugoscPobytu"] = [f"{plan.min_days}-{plan.max_days}"]
-        self.ready()
+        if plan.min_days is not None and plan.max_days is not None:
+            self.check(
+                self.page.get_by_role(
+                    "radio", name=DURATIONS[plan.min_days, plan.max_days], exact=True
+                )
+            )
+            self.expected["dlugoscPobytu"] = [f"{plan.min_days}-{plan.max_days}"]
+            self.ready()
         meals = self.page.locator('[data-test-id="r-accordion:filtryBoczne:Wyżywienie"]')
         for board in plan.boards:
             label, value = MEALS[board]
