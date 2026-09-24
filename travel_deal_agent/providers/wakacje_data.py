@@ -26,6 +26,10 @@ Two facts drive this module's shape:
   SAME numeric `id`, fetched under a different airport filter, was observed with a
   DIFFERENT departure date and price (sec 12.1). The raw numeric `id` is therefore
   never used alone as `Offer.offer_id`; see `variant_identity`.
+- The provider (`wakacje.py`) now always fetches its one confirmed combined search
+  query, which includes the site's own `za-osobe` ("average per person") price-view
+  toggle -- the reverse of the query this module's price handling originally
+  assumed (see the price section below, sec 24-25).
 
 `departurePlaces` (the list of *other* cities a card could also depart from) is read
 only to validate the source shape -- it is never iterated to fabricate additional
@@ -55,16 +59,20 @@ logger = logging.getLogger(__name__)
 MAX_HTML_BYTES = 4_000_000
 BASE = "https://www.wakacje.pl"
 
-# Every fetch this provider makes uses Wakacje.pl's own unmodified default search
-# context (rooms=[{"adult": 2, "kid": 0}]) -- confirmed identical across all three
-# offline listing fetches (RECONNAISSANCE.md sec 3, 5, 12.1). No per-offer party-size
-# field exists on the source record itself, so this is a property of how this
-# provider queries, not something read from each offer.
+# Every fetch this provider makes uses Wakacje.pl's own unmodified default room
+# composition (rooms=[{"adult": 2, "kid": 0}]) -- confirmed identical across every
+# listing fetch so far (RECONNAISSANCE.md sec 3, 5, 12.1, 25). No per-offer
+# party-size field exists on the source record itself, so this is a property of
+# how this provider queries, not something read from each offer.
 ASSUMED_PARTY_SIZE = 2
 
 # Only country slugs directly observed as a real Wakacje.pl URL path segment.
-# Unknown slugs remain diagnostic rather than guessed -- same convention as
-# `itaka_data.COUNTRIES`. The slug is the site's own `place.country.slug`, which
+# The source carries no ISO code (only its own slug, Polish display name and an
+# internal numeric id), so an unknown slug is never guessed into a code -- same
+# convention as `itaka_data.COUNTRIES`. An unmapped country is NOT a reason to
+# reject an offer: business eligibility no longer depends on the country, so such
+# an offer keeps `country=None` and its source display name is kept in
+# `destination` instead. The slug is the site's own `place.country.slug`, which
 # `normalize_offer`'s own `url` field construction confirms is identical to the
 # first path segment of a real offer detail URL (`/oferty/<country-slug>/...`).
 #
@@ -79,10 +87,12 @@ ASSUMED_PARTY_SIZE = 2
 # cypr -- live-verified: the real `place.country.slug` on 2 records from the
 #   final full-provider live scan (RECONNAISSANCE.md sec 23), previously
 #   unmapped and normalized as country=None.
-#
-# Malta was seen only as a display name on listing cards during manual browsing,
-# never as a URL/slug -- not added; guessing "malta" is exactly what this
-# convention exists to avoid.
+# malta -- live-verified: the real `place.country.slug` ("malta") on a real
+#   offer record (hotel "Luna Holiday Complex") from the confirmed combined
+#   search query's live confirmation (sec 25). Previously Malta was seen only
+#   as a display name on listing cards, never as a slug -- this is the first
+#   time the actual slug was observed, so it is now added, same evidence
+#   standard as "cypr" above.
 COUNTRIES = {
     "turcja": "TR",
     "egipt": "EG",
@@ -92,6 +102,7 @@ COUNTRIES = {
     "bulgaria": "BG",
     "hiszpania": "ES",
     "cypr": "CY",
+    "malta": "MT",
 }
 
 # Confirmed via the site's own `cateringList` filter definition (RECONNAISSANCE.md
@@ -283,13 +294,21 @@ def normalize_offer(
     if (returning - departure).days != raw.duration:
         raise ValueError("Wakacje.pl duration disagrees with departure/return dates")
 
-    total_price = Decimal(raw.price)
-    price_per_person = total_price / Decimal(ASSUMED_PARTY_SIZE)
+    # `raw.price` is the site's own per-person figure, not a total: this
+    # provider's one confirmed search query includes `za-osobe` ("average per
+    # person"), the reverse of the site's plain default (`totalPrice: true,
+    # pricePerPerson: false`). Confirmed directly, not inferred: live-fetched
+    # offers' raw `price` values matched, PLN for PLN, the per-person figures
+    # visibly labeled "średnia za osobę" on the real page during the same
+    # manual session that confirmed this query (RECONNAISSANCE.md sec 25).
+    price_per_person = Decimal(raw.price)
+    total_price = price_per_person * Decimal(ASSUMED_PARTY_SIZE)
 
     country = COUNTRIES.get(raw.place.country.slug)
-    destination = (
-        " / ".join(part for part in (raw.place.region.name, raw.place.city.name) if part) or None
-    )
+    places = [raw.place.region.name, raw.place.city.name]
+    if country is None:
+        places.insert(0, raw.place.country.name)
+    destination = " / ".join(part for part in places if part) or None
 
     slugs = (
         _slug_or_none(raw.place.country.slug),
@@ -340,7 +359,8 @@ def normalize_offer(
         price_notes=(
             f"Board detail: {raw.serviceDesc}; raw ratingReservationCount="
             f"{raw.ratingReservationCount} (semantics unconfirmed, not mapped to reviews); "
-            f"total price for {ASSUMED_PARTY_SIZE} adults, mandatory costs not verified"
+            f"per-person price (za-osobe), total computed for {ASSUMED_PARTY_SIZE} adults, "
+            f"mandatory costs not verified"
         ),
         price_verification_reason=(
             "Listing-only observation; Wakacje.pl's detail page carries no offer-specific "

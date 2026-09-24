@@ -25,10 +25,15 @@ def matches(offer: Offer, filters: FilterConfig, today: date | None = None) -> b
 
 
 def matches_criteria(offer: Offer, filters: FilterConfig, today: date | None = None) -> bool:
-    """Shared criteria; a listing shortlist does not establish booking price completeness."""
+    """Shared criteria; a listing shortlist does not establish booking price completeness.
+
+    No business rule depends on the destination country: every country the
+    source returns is eligible under the same thresholds. A country that is
+    present must still be a normalized two-letter code, but an unmapped
+    (`None`) country is not a reason to reject an offer.
+    """
     if (
-        offer.country is None
-        or offer.departure_date is None
+        offer.departure_date is None
         or offer.return_date is None
         or offer.number_of_days is None
         or offer.hotel_stars is None
@@ -36,8 +41,13 @@ def matches_criteria(offer: Offer, filters: FilterConfig, today: date | None = N
     ):
         return False
     board = normalize_board(offer.provider, offer.board_type)
-    maximum_days = filters["max_days"]
-    minimum = filters["country_min_stars"].get(offer.country, filters["min_stars"])
+    # Canonical stay length for filtering: nights = return_date - departure_date.
+    # This is the one duration signal that means the same thing for every
+    # provider, unlike `Offer.number_of_days` (see the module docstring for
+    # `notification_content._stay_length`, which explains the same split).
+    nights = (offer.return_date - offer.departure_date).days
+    minimum_nights = filters["min_nights"]
+    maximum_nights = filters["max_nights"]
     return (
         offer.currency == filters["currency"]
         and board in filters["allowed_boards"]
@@ -45,11 +55,10 @@ def matches_criteria(offer: Offer, filters: FilterConfig, today: date | None = N
         and offer.number_of_people == filters["people"]
         and Decimal("0") < offer.price_per_person <= Decimal(str(filters["max_price"]))
         and offer.departure_airport in filters["airports"]
-        and len(offer.country) == 2
-        and offer.country.isupper()
-        and offer.hotel_stars >= minimum
-        and filters["min_days"] <= offer.number_of_days
-        and (maximum_days is None or offer.number_of_days <= maximum_days)
+        and (offer.country is None or (len(offer.country) == 2 and offer.country.isupper()))
+        and offer.hotel_stars >= filters["min_stars"]
+        and (minimum_nights is None or nights >= minimum_nights)
+        and (maximum_nights is None or nights <= maximum_nights)
         and offer.departure_date >= (today or date.today())
         and rating_matches(offer, filters["provider_ratings"])
     )

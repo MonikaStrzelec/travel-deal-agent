@@ -11,8 +11,8 @@
       "WRO"
     ],
     "min_stars": 3,
-    "min_days": 7,
-    "max_days": 9,
+    "min_nights": 6,
+    "max_nights": 8,
     "provider_ratings": {
       "rainbow": {
         "enabled": true,
@@ -40,19 +40,8 @@
           "min": 0,
           "max": 10
         },
-        "price_bands": [
-          {
-            "min_price": "0",
-            "max_price": "1000",
-            "min_rating": 7
-          },
-          {
-            "min_price": "1000",
-            "max_price": "1500",
-            "max_inclusive": true,
-            "min_rating": 8
-          }
-        ]
+        "min_rating": 8,
+        "price_bands": []
       },
       "itaka": {
         "enabled": true,
@@ -82,79 +71,6 @@
         },
         "price_bands": []
       }
-    },
-    "country_min_stars": {
-      "DZ": 4,
-      "AO": 4,
-      "BJ": 4,
-      "BW": 4,
-      "BF": 4,
-      "BI": 4,
-      "CV": 4,
-      "CM": 4,
-      "CF": 4,
-      "TD": 4,
-      "KM": 4,
-      "CG": 4,
-      "CD": 4,
-      "CI": 4,
-      "DJ": 4,
-      "EG": 4,
-      "GQ": 4,
-      "ER": 4,
-      "SZ": 4,
-      "ET": 4,
-      "GA": 4,
-      "GM": 4,
-      "GH": 4,
-      "GN": 4,
-      "GW": 4,
-      "KE": 4,
-      "LS": 4,
-      "LR": 4,
-      "LY": 4,
-      "MG": 4,
-      "MW": 4,
-      "ML": 4,
-      "MR": 4,
-      "MU": 4,
-      "MA": 4,
-      "MZ": 4,
-      "NA": 4,
-      "NE": 4,
-      "NG": 4,
-      "RW": 4,
-      "ST": 4,
-      "SN": 4,
-      "SC": 4,
-      "SL": 4,
-      "SO": 4,
-      "ZA": 4,
-      "SS": 4,
-      "SD": 4,
-      "TZ": 4,
-      "TG": 4,
-      "TN": 4,
-      "UG": 4,
-      "ZM": 4,
-      "ZW": 4,
-      "EH": 4,
-      "RE": 4,
-      "YT": 4,
-      "SH": 4,
-      "IO": 4,
-      "TF": 4,
-      "AL": 4,
-      "BG": 4,
-      "HR": 4,
-      "TR": 4,
-      "BY": 4,
-      "ME": 4,
-      "LT": 4,
-      "LV": 4,
-      "MD": 4,
-      "RS": 4,
-      "XK": 4
     },
     "board_price_bands": [
       {
@@ -252,7 +168,7 @@
       "max": 5
     }
   },
-  "price_drop_pln": "100",
+  "alert_rearm_hours": 24,
   "scheduler": {
     "max_backoff_exponent": 5,
     "idle_poll_seconds": 30
@@ -302,7 +218,7 @@
       "enabled": true,
       "interval_seconds": 3600,
       "max_pages": 3,
-      "max_requests": 14,
+      "max_requests": 4,
       "timeout_seconds": 15,
       "cycle_seconds": 120,
       "request_gap_seconds": 5

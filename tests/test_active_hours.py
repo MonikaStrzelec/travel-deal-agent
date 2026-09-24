@@ -230,7 +230,7 @@ def test_run_once_scans_normally_inside_active_hours(settings: Settings, store: 
 
     result = scheduler.run_once()
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert store.run_state("mock") is not None
 
 
@@ -246,7 +246,7 @@ def test_force_bypasses_the_active_hours_gate(settings: Settings, store: Store) 
 
     result = scheduler.run_once(force=True)
 
-    assert len(result) == 2
+    assert len(result) == 3
 
 
 def test_resumes_normally_after_the_night_without_a_catch_up_burst(
@@ -310,7 +310,7 @@ def test_resumes_normally_after_the_night_without_a_catch_up_burst(
     result = morning_scheduler.run_once()
     fresh_next_run = store.run_state("mock")
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert provider.calls == 2
     assert fresh_next_run is not None
     assert fresh_next_run["next_run"] > stale_next_run["next_run"]

@@ -13,14 +13,16 @@ a real response before being relied on for a live run:
   so it is treated here as a separate top-level query parameter rather than part of
   `q`.
 
-Duration (`dF:<min>:dT:<max>`) is deliberately NOT narrowed to the business target of
-7-9 nights: the recording only showed TUI's own unmodified default, `dF:6:dT:14` (the
-same "6-14" preset already seen selected by default in prior reconnaissance of the
-duration facet) -- never a value someone actually changed. Whether the backend accepts
-arbitrary dF/dT pairs, or only specific presets, was not confirmed offline. `6-14` is
-used because it is the one positively confirmed encoding and a strict superset of
-[7, 9]. The shared `filtering.matches()` remains the sole authority that narrows
-results to exactly 7-9 nights; nothing here claims to do that narrowing itself.
+Duration (`dF:<min>:dT:<max>`) is deliberately NOT narrowed to the configured
+`min_nights`/`max_nights` business range: the recording only showed TUI's own
+unmodified default, `dF:6:dT:14` (the same "6-14" preset already seen selected by
+default in prior reconnaissance of the duration facet) -- never a value someone
+actually changed. Whether the backend accepts arbitrary dF/dT pairs, or only specific
+presets, was not confirmed offline. `6-14` is used because it is the one positively
+confirmed encoding and a superset of any configured range this module accepts (see
+`_duration_tokens`). The shared `filtering.matches()` remains the sole authority that
+narrows results to the configured nights range; nothing here claims to do that
+narrowing itself.
 
 `tripAdvisorRating:4t` was present in the recording but is intentionally NOT applied
 by default: the project's current business configuration has no minimum-rating
@@ -132,8 +134,11 @@ def _price_ceiling(filters: FilterConfig) -> str:
 
 
 def _duration_tokens(filters: FilterConfig) -> tuple[str, str]:
-    minimum, maximum = filters["min_days"], filters["max_days"]
-    if minimum < DURATION_FROM or maximum is None or maximum > DURATION_TO:
+    """`None` means no configured bound on that side and is always covered."""
+    minimum, maximum = filters["min_nights"], filters["max_nights"]
+    if (minimum is not None and minimum < DURATION_FROM) or (
+        maximum is not None and maximum > DURATION_TO
+    ):
         raise ValueError(
             f"Configured stay length [{minimum}, {maximum}] is not covered by the one "
             f"confirmed TUI duration encoding [{DURATION_FROM}, {DURATION_TO}]"

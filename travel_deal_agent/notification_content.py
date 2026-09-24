@@ -1,26 +1,166 @@
-"""Channel-independent alert content built from immutable outbox snapshots."""
+"""Channel-independent alert content built from immutable outbox snapshots.
 
+Rendered as compact, Polish-language Telegram-style text (the project owner is
+the sole recipient). HTML is used only for the offer link (`parse_mode: "HTML"`,
+set in `notifications.UrllibTelegramTransport`) -- every piece of free text is
+escaped with `html.escape` first, so a hotel name or destination containing
+`&`/`<`/`>` can never break the message or the link markup.
+"""
+
+import html
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 from pydantic import TypeAdapter
 
 from .models import Offer
+from .providers.rainbow_config import AIRPORT_LABELS
 from .storage import Notification
 
-MISSING = "not available"
+# Polish display names for the ISO codes this project's providers can produce.
+# Not guessed: the same evidence-backed names already used for display in
+# rainbow_data.COUNTRIES/tui_data.COUNTRIES (real Polish names observed on
+# real cards), just keyed by ISO code here instead of by source slug/label --
+# presentation only, this module never depends on provider internals.
+COUNTRY_NAMES_PL = {
+    "TR": "Turcja",
+    "GR": "Grecja",
+    "TN": "Tunezja",
+    "AL": "Albania",
+    "EG": "Egipt",
+    "ES": "Hiszpania",
+    "BG": "Bułgaria",
+    "CY": "Cypr",
+    "IT": "Włochy",
+    "PT": "Portugalia",
+    "MT": "Malta",
+}
+
+# Canonical board codes only (`boards.CANONICAL_BOARDS`); any other value
+# (e.g. a provider-specific label that was never normalized) falls back to
+# being shown as-is, never guessed into one of these.
+BOARD_LABELS_PL = {
+    "AI": "All Inclusive (AI)",
+    "HB": "Śniadania i obiadokolacje (HB)",
+    "FB": "Pełne wyżywienie (FB)",
+    "BB": "Śniadania (BB)",
+    "ZO": "Według programu (ZO)",
+    "RO": "Bez wyżywienia (RO)",
+}
+
+WEEKDAYS_PL = (
+    "poniedziałek",
+    "wtorek",
+    "środa",
+    "czwartek",
+    "piątek",
+    "sobota",
+    "niedziela",
+)
+
+KIND_LABELS_PL = {
+    "new_offer": "✈️ NOWA OFERTA",
+    "price_drop": "📉 SPADEK CENY",
+}
 
 
-def format_money(value: Decimal | None, currency: str | None) -> str:
-    """Keep missing prices explicit and preserve the source currency."""
-    return f"{value:.2f} {currency or MISSING}" if value is not None else MISSING
+def _pl_number(value: float) -> str:
+    """A plain integer when whole, one Polish-comma decimal otherwise."""
+    if value == int(value):
+        return str(int(value))
+    return f"{value:.1f}".replace(".", ",")
 
 
-def format_rating(value: float | None, maximum: float | None) -> str:
-    """Avoid assuming a source scale when an older snapshot has no scale metadata."""
-    if value is None:
-        return MISSING
-    return f"{value:g}/{maximum:g}" if maximum is not None else f"{value:g} (scale unknown)"
+def _pl_decimal(value: Decimal) -> str:
+    """A plain integer when whole, two Polish-comma decimals otherwise."""
+    whole = value.to_integral_value()
+    if value == whole:
+        return str(whole)
+    return f"{value:.2f}".replace(".", ",")
+
+
+def _pl_people(count: int) -> str:
+    """Standard Polish plural for "osoba": 1 / 2-4 / 5+."""
+    if count == 1:
+        return "osobę"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "osoby"
+    return "osób"
+
+
+def _pl_nights(count: int) -> str:
+    """Standard Polish plural for "noc": 1 / 2-4 / 5+."""
+    if count == 1:
+        return "noc"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "noce"
+    return "nocy"
+
+
+def _pl_days(count: int) -> str:
+    """Standard Polish plural for "dzień": only 1 vs. everything else."""
+    return "dzień" if count == 1 else "dni"
+
+
+def _stay_length(offer: Offer) -> str | None:
+    """Renders as "<days> dni / <nights> nocy" -- the phrasing Wakacje.pl itself
+    shows a shopper on an offer's own page (e.g. "8 dni / 7 nocy" for a 7-night
+    stay).
+
+    Derived from `departure_date`/`return_date` -- the one stay-length signal
+    whose meaning (a calendar span) is the same for every provider -- rather
+    than from `Offer.number_of_days`, whose native meaning is NOT consistent
+    across providers (ITAKA and Rainbow already store their own touroperator
+    "dni" count, nights + 1, while Wakacje.pl and TUI store a plain night
+    count). Falls back to the source's own `number_of_days` value only when a
+    date is missing, and never relabels it in that case (its "dni"/"nights"
+    meaning is provider-specific and not resolved here).
+    """
+    if offer.departure_date is not None and offer.return_date is not None:
+        nights = (offer.return_date - offer.departure_date).days
+        if nights >= 1:
+            days = nights + 1
+            return f"{days} {_pl_days(days)} / {nights} {_pl_nights(nights)}"
+    if offer.number_of_days is not None:
+        return f"{offer.number_of_days} dni"
+    return None
+
+
+def _pl_date(value: date) -> str:
+    return f"{value.strftime('%d.%m.%Y')} ({WEEKDAYS_PL[value.weekday()]})"
+
+
+def _compact_destination(destination: str | None) -> str | None:
+    """Collapse "Region / Region" (region == city) to one part; keep distinct
+    parts, comma-joined -- never invents or drops real place information."""
+    if not destination:
+        return None
+    parts = [p.strip() for p in destination.split("/") if p.strip()]
+    deduped: list[str] = []
+    for part in parts:
+        if not deduped or deduped[-1].casefold() != part.casefold():
+            deduped.append(part)
+    return ", ".join(deduped) if deduped else None
+
+
+EXTERNAL_SOURCE_LABELS = {"google": "Google", "tripadvisor": "TripAdvisor"}
+
+
+def _verified_external_rating(offer: Offer, source: str) -> tuple[float, float] | None:
+    """(rating, scale_max) only when a source has actually confirmed it."""
+    verified = offer.hotel_ratings.get(source)
+    if verified is not None and offer.external_verification_statuses.get(source) == "verified":
+        return verified.rating, verified.scale_max
+    if (
+        source == "google"
+        and offer.google_rating is not None
+        and offer.external_rating_status == "verified"
+    ):
+        rating = offer.google_rating.get("rating")
+        if rating is not None and offer.google_rating_max is not None:
+            return rating, offer.google_rating_max
+    return None
 
 
 @dataclass(frozen=True)
@@ -45,100 +185,98 @@ class NotificationMessage:
         )
 
     def render(self) -> str:
-        """Render the same complete content for the console, Telegram or a future
-        Discord/email adapter.
+        """Render one compact message, in Polish, for the console or Telegram.
 
-        An incomplete price (`price_is_complete=False`) is rendered with an
-        explicit disclaimer instead of being rejected: by the time a
-        notification exists in the outbox, `filtering.matches()` has already
-        decided this provider's listing price is acceptable to alert on (see
-        `filters["accept_incomplete_price_from"]`). This method never
-        re-checks that business decision -- it only reflects the persisted
-        `price_is_complete` value in the rendered text.
+        `final_score` and Tripadvisor rating are deliberately never shown here
+        (they still drive ranking/eligibility elsewhere -- only the message
+        content is affected). An incomplete price (`price_is_complete=False`)
+        still gets a short disclaimer, moved under the link rather than mixed
+        into the main body: by the time a notification exists in the outbox,
+        `filtering.matches()` has already decided this provider's listing
+        price is acceptable to alert on (see
+        `filters["accept_incomplete_price_from"]`); this method never
+        re-checks that decision, only discloses it.
         """
         offer = self.offer
-        google = offer.google_rating if offer.external_rating_status == "verified" else None
-        google_rating = (
-            format_rating(google.get("rating"), offer.google_rating_max) if google else MISSING
-        )
-        if offer.hotel_ratings or offer.external_verification_statuses:
-            verified_google = offer.hotel_ratings.get("google")
-            google_rating = (
-                format_rating(verified_google.rating, verified_google.scale_max)
-                if verified_google is not None
-                and offer.external_verification_statuses.get("google") == "verified"
-                else MISSING
-            )
-        total = offer.total_price
-        calculated = (
-            total is None
-            and offer.price_per_person is not None
-            and offer.number_of_people is not None
-        )
-        if calculated and offer.price_per_person is not None and offer.number_of_people is not None:
-            total = offer.price_per_person * offer.number_of_people
-        lines = [
-            f"Travel Deal Agent | {self.kind} | #{self.notification_id}",
-            f"Hotel: {offer.hotel_name or MISSING}",
-            f"Country / region: {offer.country or MISSING} / {offer.destination or MISSING}",
-            f"Travel agency: {offer.provider.upper()}",
-            f"Price per person: {format_money(offer.price_per_person, offer.currency)}",
-            f"Total for {offer.number_of_people if offer.number_of_people is not None else '?'} travelers: "
-            f"{format_money(total, offer.currency)}{' (calculated)' if calculated else ''}",
-        ]
+        e = html.escape
+
+        lines = [KIND_LABELS_PL.get(self.kind, self.kind), ""]
+
+        hotel = [e(offer.hotel_name) if offer.hotel_name else "Hotel nieznany"]
+        if offer.hotel_stars is not None:
+            hotel[0] += f" {'★' * max(0, round(offer.hotel_stars))}"
+        country_name = COUNTRY_NAMES_PL.get(offer.country, offer.country) if offer.country else None
+        if country_name:
+            hotel.append(e(country_name))
+        destination = _compact_destination(offer.destination)
+        if destination:
+            hotel.append(e(destination))
+        lines.append(f"🏨 {' • '.join(hotel)}")
+
+        if offer.rating is not None:
+            rating_line = f"⭐ {f'{offer.rating:.1f}'.replace('.', ',')}"
+            if offer.provider_rating_max is not None:
+                rating_line += f"/{_pl_number(offer.provider_rating_max)}"
+            for source in dict.fromkeys(["google", "tripadvisor", *offer.hotel_ratings]):
+                verified = _verified_external_rating(offer, source)
+                if verified is None:
+                    continue
+                v_rating, v_max = verified
+                label = EXTERNAL_SOURCE_LABELS.get(source, source.capitalize())
+                rating_line += (
+                    f" ({label}: {f'{v_rating:.1f}'.replace('.', ',')}/{_pl_number(v_max)})"
+                )
+            lines.append(rating_line)
+
+        if offer.board_type:
+            board_label = BOARD_LABELS_PL.get(offer.board_type, offer.board_type)
+            lines.append(f"🍽 {e(board_label)}")
+
+        lines.append("")
+
+        if offer.price_per_person is not None:
+            price_line = f"💰 {_pl_decimal(offer.price_per_person)} zł/os."
+            people = offer.number_of_people
+            total = offer.total_price
+            if total is None and people is not None:
+                total = offer.price_per_person * people
+            if total is not None and people is not None:
+                price_line += f" ({_pl_decimal(total)} zł / {people} {_pl_people(people)})"
+            lines.append(price_line)
+            if self.kind == "price_drop" and self.previous_price is not None:
+                lines.append(f"📉 Poprzednio: {_pl_decimal(self.previous_price)} zł/os.")
+
+        lines.append("")
+
+        if offer.departure_airport:
+            airport_name = AIRPORT_LABELS.get(offer.departure_airport, offer.departure_airport)
+            departure_line = f"🛫 Wylot: {e(airport_name)} ({e(offer.departure_airport)})"
+            stay_length = _stay_length(offer)
+            if stay_length is not None:
+                departure_line += f" • {stay_length}"
+            lines.append(departure_line)
+
+        if offer.departure_date is not None:
+            lines.append(f"📅 {_pl_date(offer.departure_date)}")
+        if offer.return_date is not None:
+            lines.append(f"🛬 Powrót: {_pl_date(offer.return_date)}")
+
+        if offer.url:
+            lines.append("")
+            lines.append(f'🔗 <a href="{e(offer.url)}">Zobacz ofertę</a>')
+
         if not offer.price_is_complete:
-            lines.append("Price is from the listing — not yet confirmed at checkout/booking.")
-        lines += [
-            f"Duration: {offer.number_of_days if offer.number_of_days is not None else MISSING} days",
-            f"Departure airport: {offer.departure_airport or MISSING}",
-            f"Hotel stars: {offer.hotel_stars if offer.hotel_stars is not None else MISSING}",
-            f"Agency rating: {format_rating(offer.rating, offer.provider_rating_max)}",
-            f"Google rating: {google_rating}",
-            f"Board: {offer.board_type or MISSING}",
-            f"Offer URL: {offer.url or MISSING}",
-            f"Final score: {offer.final_score:.3f}"
-            if offer.final_score is not None
-            else f"Final score: {MISSING}",
-        ]
-        for source in dict.fromkeys(["google", "tripadvisor", *offer.hotel_ratings]):
-            result = offer.hotel_ratings.get(source)
-            label = {"google": "Google", "tripadvisor": "Tripadvisor"}.get(source, source)
-            value = (
-                format_rating(result.rating, result.scale_max)
-                if result is not None
-                and offer.external_verification_statuses.get(source) == "verified"
-                else MISSING
-            )
-            if source != "google":
-                lines.append(f"{label} rating: {value}")
+            lines.append("ℹ️ Cena z listingu — niepotwierdzona przy rezerwacji.")
+
         if offer.booking_total_price is not None:
             lines.append(
-                "Booking total includes mandatory operator fees; local costs are separate."
+                f"🧾 Cena całkowita rezerwacji: {_pl_decimal(offer.booking_total_price)} zł "
+                f"(zawiera opłaty obowiązkowe)"
             )
-            lines.append(f"Package price: {format_money(offer.package_price, offer.currency)}")
-            for fee in offer.operator_mandatory_fees:
-                lines.append(
-                    f"Operator fee {fee.kind}: {format_money(fee.amount, fee.currency)} (party total)"
-                )
-        if not offer.local_mandatory_costs:
-            lines.append("Local mandatory costs: no data (does not mean no costs)")
         for cost in offer.local_mandatory_costs:
-            detail = cost.description
+            detail = e(cost.description)
             if cost.amount is not None:
-                detail += f" | {format_money(cost.amount, cost.currency)}"
-            if cost.unit:
-                detail += f" / {cost.unit}"
-            if cost.conditions:
-                detail += f" | {cost.conditions}"
-            lines.append(f"Local mandatory cost ({cost.certainty}): {detail}")
-        if (
-            self.kind == "price_drop"
-            and self.previous_price is not None
-            and offer.price_per_person is not None
-        ):
-            drop = self.previous_price - offer.price_per_person
-            lines.append(
-                f"Price drop per person: {format_money(drop, offer.currency)} "
-                f"(previous alert: {format_money(self.previous_price, offer.currency)})"
-            )
-        return "\n".join(lines)
+                detail += f" ({_pl_decimal(cost.amount)} {e(cost.currency or '')})"
+            lines.append(f"🧾 {detail}")
+
+        return "\n".join(lines).strip()

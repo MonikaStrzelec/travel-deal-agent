@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import replace
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -25,10 +26,16 @@ from travel_deal_agent.storage import Store
         ("rainbow", "999.99", 3.99, False),
         ("rainbow", "1000", 5.0, True),
         ("rainbow", "1000", 4.99, False),
-        ("wakacje.pl", "999.99", 7.0, True),
-        ("wakacje.pl", "999.99", 6.99, False),
+        # Wakacje.pl: one price-independent threshold of 8.0 (no price bands).
+        ("wakacje.pl", "500", 7.9, False),
+        ("wakacje.pl", "500", 8.0, True),
+        ("wakacje.pl", "999.99", 7.0, False),
+        ("wakacje.pl", "999.99", 7.9, False),
+        ("wakacje.pl", "999.99", 8.0, True),
         ("wakacje.pl", "1000", 8.0, True),
         ("wakacje.pl", "1000", 7.99, False),
+        ("wakacje.pl", "1200", 7.9, False),
+        ("wakacje.pl", "1200", 8.6, True),
         ("rainbow", "1499.99", 5.0, True),
         ("wakacje.pl", "1499.99", 8.0, True),
         ("rainbow", "1500", 5, True),
@@ -121,6 +128,37 @@ def test_invalid_rules(settings: Settings, mutation: str) -> None:
         validate_rating_rules(rules)
 
 
+def test_wakacje_uses_one_configurable_threshold_without_price_bands(
+    offer: Offer, settings: Settings
+) -> None:
+    # Arrange
+    rule = settings.filters["provider_ratings"]["wakacje.pl"]
+    filters = deepcopy(settings.filters)
+    filters["provider_ratings"]["wakacje.pl"]["min_rating"] = 7.5
+    candidate = replace(offer, provider="wakacje.pl", rating=7.6)
+    # Act / Assert
+    assert rule.get("min_rating") == 8
+    assert rule["price_bands"] == []
+    assert not matches(candidate, settings.filters)
+    assert matches(candidate, filters)
+
+
+@pytest.mark.parametrize("mutation", ["both", "out_of_scale", "missing"])
+def test_invalid_single_threshold_rules(settings: Settings, mutation: str) -> None:
+    # Arrange
+    rules = deepcopy(settings.filters["provider_ratings"])
+    rule = rules["wakacje.pl"]
+    if mutation == "both":
+        rule["price_bands"] = [{"min_price": "0", "max_price": "1500", "min_rating": 8}]
+    elif mutation == "out_of_scale":
+        rule["min_rating"] = 11
+    else:
+        del rule["min_rating"]
+    # Act / Assert
+    with pytest.raises(ValueError):
+        validate_rating_rules(rules)
+
+
 def test_cross_scale_ranking_and_google(offer: Offer, settings: Settings) -> None:
     ranking = deepcopy(settings.ranking)
     ranking["weights"] = {key: 0 for key in ranking["weights"]}
@@ -179,7 +217,11 @@ def test_second_stage_only_checks_top_eligible_offers(
                 replace(valid, offer_id="low-rating", rating=4),
                 replace(valid, offer_id="expensive", price_per_person=Decimal("1600")),
                 replace(valid, offer_id="airport", departure_airport="KRK"),
-                replace(valid, offer_id="short", number_of_days=1),
+                replace(
+                    valid,
+                    offer_id="short",
+                    return_date=valid.departure_date + timedelta(days=1),  # type: ignore
+                ),
                 replace(valid, offer_id="stars", hotel_stars=2),
                 replace(
                     valid,

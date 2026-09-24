@@ -13,7 +13,6 @@ from pydantic import ValidationError
 from travel_deal_agent.config import Settings
 from travel_deal_agent.filtering import matches
 from travel_deal_agent.providers.wakacje_data import (
-    COUNTRIES,
     RawOffer,
     decode_next_data,
     extract_offers,
@@ -27,6 +26,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "wakacje" / "listing.html"
 FIXTURE_HTML = FIXTURE.read_text(encoding="utf-8")
 WRO_FIXTURE = Path(__file__).parent / "fixtures" / "wakacje" / "listing_z_wroclawia.html"
 WRO_HTML = WRO_FIXTURE.read_text(encoding="utf-8")
+# Real offers from the confirmed combined search query's own live confirmation
+# (RECONNAISSANCE.md sec 25) -- the query this provider now always uses, so
+# unlike FIXTURE_HTML/WRO_HTML (captured before the za-osobe switch), this
+# fixture's `price` values are genuinely per-person, matching current code.
+COMBO_FIXTURE = Path(__file__).parent / "fixtures" / "wakacje" / "listing_combo_search.html"
+COMBO_HTML = COMBO_FIXTURE.read_text(encoding="utf-8")
 
 
 def geo(name: str, slug: str) -> dict[str, Any]:
@@ -275,6 +280,7 @@ def test_parse_listing_end_to_end_matches_normalize_offer() -> None:
         ("bulgaria", "BG"),
         ("hiszpania", "ES"),
         ("cypr", "CY"),
+        ("malta", "MT"),
     ],
 )
 def test_confirmed_country_slugs_map_to_iso_codes(slug: str, expected_iso: str) -> None:
@@ -282,7 +288,9 @@ def test_confirmed_country_slugs_map_to_iso_codes(slug: str, expected_iso: str) 
     # (turcja/egipt/tunezja/grecja and bulgaria/hiszpania: RECONNAISSANCE.md
     # sec 11.4; albania/hiszpania: real fetched offer detail URLs from a later
     # manual comparison session; cypr: 2 real records from the final
-    # full-provider live scan, RECONNAISSANCE.md sec 23 -- never guessed).
+    # full-provider live scan, RECONNAISSANCE.md sec 23; malta: a real record
+    # from the confirmed combined search query's live confirmation, sec 25 --
+    # never guessed).
     candidate = offer(
         place={
             "country": geo("X", slug),
@@ -296,40 +304,35 @@ def test_confirmed_country_slugs_map_to_iso_codes(slug: str, expected_iso: str) 
     assert result.country == expected_iso
 
 
-def test_malta_is_not_mapped_despite_being_seen_as_a_display_name() -> None:
-    # Arrange: "Malta" was only ever seen as a display name on listing cards
-    # during manual browsing (hotels "Soreda", "Pebbles Resort"), never as a
-    # real Wakacje.pl URL/slug -- adding "malta" would be guessing, which this
-    # dict's whole convention exists to avoid.
-    candidate = offer(
-        place={
-            "country": geo("Malta", "malta"),
-            "region": geo("Wyspa Malta", "wyspa-malta"),
-            "city": geo("St. Paul's Bay", "st-pauls-bay"),
-        }
-    )
+@pytest.mark.parametrize(
+    "name,slug",
+    [
+        ("Portugalia", "portugalia"),
+        ("Włochy", "wlochy"),
+        ("Czarnogóra", "czarnogora"),
+        ("Nieznany Kraj", "nieznany-kraj"),
+    ],
+)
+def test_country_outside_the_mapping_is_not_rejected(
+    settings: Settings, name: str, slug: str
+) -> None:
+    # Arrange: an otherwise good offer from a country COUNTRIES does not map.
+    candidate = copy.deepcopy(ALION_OFFER)
+    candidate["place"]["country"] = geo(name, slug)
     # Act
     result = normalize_offer(candidate, NOW)
     # Assert
     assert result.country is None
-    assert "malta" not in COUNTRIES
+    assert result.destination is not None and result.destination.startswith(f"{name} / ")
+    assert matches(result, settings.filters, date(2026, 9, 22))
 
 
-def test_unknown_country_slug_still_yields_none_and_fails_closed(settings: Settings) -> None:
-    # Arrange: an entirely unrecognized slug must still fail closed, exactly as
-    # before the COUNTRIES dict was extended.
-    candidate = offer(
-        place={
-            "country": geo("Nieznany Kraj", "nieznany-kraj"),
-            "region": geo("Wybrzeże Egejskie", "wybrzeze-egejskie"),
-            "city": geo("Didim", "didim"),
-        }
-    )
+def test_mapped_country_destination_is_unchanged() -> None:
     # Act
-    result = normalize_offer(candidate, NOW)
-    # Assert
-    assert result.country is None
-    assert not matches(result, settings.filters)
+    result = normalize_offer(ALION_OFFER, NOW)
+    # Assert: a known code already names the country, so it is not repeated.
+    assert result.country == "AL"
+    assert result.destination == "Riwiera Albańska / Durrës"
 
 
 # --- price / Decimal / total-vs-per-person ------------------------------------------
@@ -343,28 +346,23 @@ def test_price_is_decimal_type() -> None:
     assert isinstance(result.total_price, Decimal)
 
 
-def test_price_is_a_total_not_per_person() -> None:
-    # Arrange: RECONNAISSANCE.md sec 8a.1 -- `price` is confirmed to be the total for
-    # the whole party, not a per-person figure.
+def test_price_is_per_person_not_a_total() -> None:
+    # Arrange: RECONNAISSANCE.md sec 25 -- the provider's one confirmed search
+    # query includes `za-osobe` ("average per person"), so `price` is now
+    # confirmed to be the per-person figure directly, the reverse of the site's
+    # plain default the parser originally assumed (sec 8a.1).
     # Act
     result = normalize_offer(offer(price=5559), NOW)
     # Assert
-    assert result.total_price == Decimal("5559")
+    assert result.price_per_person == Decimal("5559")
 
 
-def test_price_per_person_is_total_divided_by_two() -> None:
+def test_total_price_is_price_per_person_times_party_size() -> None:
     # Act
     result = normalize_offer(offer(price=5559), NOW)
     # Assert: every fetch uses the site's own unmodified 2-adult default (sec 3, 5, 12.1).
-    assert result.price_per_person == Decimal("5559") / Decimal(2)
+    assert result.total_price == Decimal("5559") * Decimal(2)
     assert result.number_of_people == 2
-
-
-def test_price_per_person_preserves_exact_halves() -> None:
-    # Act: an odd total, so price/2 is not a whole number.
-    result = normalize_offer(offer(price=4303), NOW)
-    # Assert: Decimal division, never float rounding.
-    assert result.price_per_person == Decimal("2151.5")
 
 
 @pytest.mark.parametrize("bad", [-1])
@@ -753,14 +751,39 @@ def test_empty_offers_list_is_not_an_error() -> None:
 
 
 def test_wroclawia_fixture_parses_and_matches_confirmed_evidence() -> None:
-    # Act
+    # Act: WRO_HTML predates the provider's switch to the za-osobe query (sec
+    # 25), so its raw `price` (5938) is read by the current, unconditional
+    # per-person parsing exactly like any other fetched page would be -- this
+    # test exercises the parsing mechanics (departure airport, dates,
+    # requested_departure_airport validation), not a live per-person price claim.
     result = parse_listing(WRO_HTML, NOW, requested_departure_airport="WRO")
     # Assert: RECONNAISSANCE.md sec 12.1's real captured pair.
     assert len(result) == 2
     laur = next(o for o in result if o.hotel_name == "Laur Experience & Elegance")
     assert laur.departure_airport == "WRO"
-    assert laur.total_price == Decimal("5938")
+    assert laur.price_per_person == Decimal("5938")
     assert laur.departure_date == date(2026, 10, 22)
+
+
+def test_combo_search_fixture_parses_multiple_airports_with_per_person_prices() -> None:
+    # Act: real offers from the confirmed combined search query's own live
+    # confirmation (RECONNAISSANCE.md sec 25) -- the exact query this provider
+    # now always uses. No requested_departure_airport is passed: a single
+    # combined-query fetch spans multiple airports, unlike the old per-airport
+    # fetches.
+    result = parse_listing(COMBO_HTML, NOW)
+    # Assert
+    assert len(result) == 2
+    luna = next(o for o in result if o.hotel_name == "Luna Holiday Complex")
+    meridian = next(o for o in result if o.hotel_name == "Meridian")
+    assert luna.country == "MT"
+    assert luna.departure_airport == "WMI"
+    assert luna.price_per_person == Decimal("1080")
+    assert luna.total_price == Decimal("2160")
+    assert meridian.country == "BG"
+    assert meridian.departure_airport == "WAW"
+    assert meridian.price_per_person == Decimal("1393")
+    assert meridian.total_price == Decimal("2786")
 
 
 # --- final eligibility: shared filtering.matches() is the sole arbiter -------------------
@@ -780,7 +803,7 @@ def test_final_filtering_accepts_a_wakacje_offer_via_the_incomplete_price_whitel
     # Arrange: an offer that satisfies every other business rule (airport, stars,
     # board, days, price, rating); price_is_complete is False, same as always.
     cheap = offer(
-        price=2800,  # 1400/person, under the 1500 cap
+        price=1400,  # per-person (za-osobe query), under the 1500 cap
         category=4,
         service=1,
         serviceDesc="All Inclusive",
@@ -807,7 +830,7 @@ def test_final_filtering_still_blocks_a_wakacje_offer_without_the_whitelist_entr
     # configuration, not by any change to this parser's own output.
     settings.filters["accept_incomplete_price_from"] = []
     cheap = offer(
-        price=2800,
+        price=1400,
         category=4,
         service=1,
         serviceDesc="All Inclusive",
@@ -829,10 +852,15 @@ def test_final_filtering_still_blocks_a_wakacje_offer_without_the_whitelist_entr
 # comparison session, not invented for this test: hotel "Alion", Albania,
 # Riwiera Albanska / Durres, departing Warszawa (WAW, confirmed via the
 # "?z-warszawy" filter), 30.10.2026-06.11.2026 (8 dni / 7 nocy), Sniadania i
-# obiadokolacje (HB), 4 gwiazdki, ocena 8.6, "Cena razem" 2958 PLN (-> 1479
-# PLN/os.). This offer is exactly why Albania was added to COUNTRIES and WAW to
-# CONFIRMED_AIRPORT_SLUGS: before this change it was rejected on two
-# independent grounds (offer.country is None; WAW never deliberately queried).
+# obiadokolacje (HB), 4 gwiazdki, ocena 8.6. That same manual session recorded
+# BOTH the total ("Cena razem" 2958 PLN) and the per-person figure (1479
+# PLN/os.) for this exact offer -- `price` below uses the per-person figure
+# (1479), matching what the provider's current za-osobe query would return
+# (sec 25); this is not a new number, only the other already-recorded real
+# value for the new query context. This offer is exactly why Albania was added
+# to COUNTRIES and WAW to CONFIRMED_AIRPORT_SLUGS: before that change it was
+# rejected on two independent grounds (offer.country is None; WAW never
+# deliberately queried).
 
 ALION_OFFER: dict[str, Any] = {
     "id": 1145009,
@@ -844,7 +872,7 @@ ALION_OFFER: dict[str, Any] = {
         "city": geo("Durrës", "durres"),
     },
     "category": 4,
-    "price": 2958,
+    "price": 1479,
     "originalCurrency": "PLN",
     "departureDate": "2026-10-30",
     "returnDate": "2026-11-06",
@@ -884,3 +912,35 @@ def test_real_alion_scenario_passes_matches_end_to_end(settings: Settings) -> No
     # Act / Assert: every configured hard filter, evaluated as of the date this
     # offer was actually observed.
     assert matches(result, settings.filters, date(2026, 9, 22))
+
+
+def test_three_star_offer_from_a_former_four_star_country_passes(settings: Settings) -> None:
+    # Arrange: Albania previously required 4 stars; now 3 stars suffice everywhere.
+    candidate = {**ALION_OFFER, "category": 3}
+    # Act
+    result = normalize_offer(candidate, NOW)
+    # Assert
+    assert result.country == "AL"
+    assert matches(result, settings.filters, date(2026, 9, 22))
+
+
+@pytest.mark.parametrize(
+    "price,rating,expected",
+    [
+        (999, 7.9, False),
+        (999, 8.0, True),
+        (1479, 7.9, False),
+        (1479, 8.0, True),
+        (999, 7.0, False),
+    ],
+)
+def test_one_internal_rating_threshold_regardless_of_price(
+    settings: Settings, price: int, rating: float, expected: bool
+) -> None:
+    # Arrange: `price` is per-person directly (za-osobe, sec 25) -- 999 and 1479
+    # PLN per person -- the old bands used 7.0 below 1000.
+    candidate = {**ALION_OFFER, "price": price, "ratingValue": rating, "service": 1}
+    # Act
+    result = normalize_offer(candidate, NOW)
+    # Assert
+    assert matches(result, settings.filters, date(2026, 9, 22)) is expected

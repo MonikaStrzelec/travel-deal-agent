@@ -141,23 +141,33 @@ def test_sort_is_ascending_by_price(settings: Settings) -> None:
     assert q.startswith("%3Aprice%3A")
 
 
-def test_duration_uses_the_one_confirmed_encoding_that_covers_7_9(settings: Settings) -> None:
-    # Arrange
-    assert (settings.filters["min_days"], settings.filters["max_days"]) == (7, 9)
+def test_duration_uses_the_one_confirmed_encoding_regardless_of_configured_range(
+    settings: Settings,
+) -> None:
+    # Arrange: production business range at time of writing, in nights.
+    assert (settings.filters["min_nights"], settings.filters["max_nights"]) == (6, 8)
     # Act
     url = build_search_path(settings.filters)
-    # Assert: dF:6:dT:14 is TUI's own unmodified default and a strict superset of 7-9.
+    # Assert: dF:6:dT:14 is TUI's own unmodified default and a strict superset of 6-8.
+    assert "dF%3A6" in url and "dT%3A14" in url
+
+
+def test_duration_with_no_configured_bounds_still_uses_the_confirmed_default(
+    settings: Settings,
+) -> None:
+    # Arrange: the current production business decision -- no duration limit at all.
+    # Act
+    url = build_search_path(filters(settings, min_nights=None, max_nights=None))
+    # Assert
     assert "dF%3A6" in url and "dT%3A14" in url
 
 
 def test_duration_outside_the_confirmed_envelope_is_rejected(settings: Settings) -> None:
     # Act / Assert: neither bound narrower nor wider than [6, 14] can be honored.
     with pytest.raises(ValueError, match="not covered"):
-        build_search_path(filters(settings, min_days=3, max_days=9))
+        build_search_path(filters(settings, min_nights=3, max_nights=9))
     with pytest.raises(ValueError, match="not covered"):
-        build_search_path(filters(settings, min_days=7, max_days=20))
-    with pytest.raises(ValueError, match="not covered"):
-        build_search_path(filters(settings, min_days=7, max_days=None))
+        build_search_path(filters(settings, min_nights=7, max_nights=20))
 
 
 def test_no_tripadvisor_rating_filter_by_default(settings: Settings) -> None:

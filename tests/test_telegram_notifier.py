@@ -3,7 +3,6 @@
 import io
 import json
 import logging
-from decimal import Decimal
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -98,7 +97,7 @@ def test_notifier_rejects_missing_configuration() -> None:
 
 
 def test_notifier_sends_rendered_message_to_configured_chat(offer: Offer, store: Store) -> None:
-    store.observe(offer, True, Decimal("100"))
+    store.observe(offer, True)
     transport = RecordingTransport()
     notifier = TelegramNotifier(TelegramConfig(SECRET_TOKEN, "123"), transport=transport)
 
@@ -114,7 +113,7 @@ def test_notifier_sends_rendered_message_to_configured_chat(offer: Offer, store:
 def test_notifier_failure_leaves_notification_pending_and_does_not_raise(
     offer: Offer, store: Store
 ) -> None:
-    store.observe(offer, True, Decimal("100"))
+    store.observe(offer, True)
     notifier = TelegramNotifier(TelegramConfig(SECRET_TOKEN, "123"), transport=FailingTransport())
 
     deliver_pending(store, notifier)
@@ -125,7 +124,7 @@ def test_notifier_failure_leaves_notification_pending_and_does_not_raise(
 def test_notifier_failure_never_logs_the_bot_token(
     offer: Offer, store: Store, caplog: pytest.LogCaptureFixture
 ) -> None:
-    store.observe(offer, True, Decimal("100"))
+    store.observe(offer, True)
     notifier = TelegramNotifier(TelegramConfig(SECRET_TOKEN, "123"), transport=FailingTransport())
 
     with caplog.at_level(logging.ERROR):
@@ -147,7 +146,7 @@ def test_urllib_transport_sends_expected_payload(monkeypatch: pytest.MonkeyPatch
 
     transport.send_message("123", "hello world", 5.0)
 
-    assert captured["body"] == {"chat_id": "123", "text": "hello world"}
+    assert captured["body"] == {"chat_id": "123", "text": "hello world", "parse_mode": "HTML"}
     assert SECRET_TOKEN in captured["url"]
 
 

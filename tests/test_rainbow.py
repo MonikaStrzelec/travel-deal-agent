@@ -385,8 +385,8 @@ def test_shared_filters_reject_site_policy_violations(settings: Settings) -> Non
     # Act / assert: UI filtering is never the acceptance authority.
     for bad in (
         replace(complete, rating=4.9),
-        replace(complete, hotel_stars=3),
-        replace(complete, number_of_days=10),
+        replace(complete, hotel_stars=2),
+        replace(complete, return_date=date(2026, 12, 15)),
         replace(complete, departure_airport="KRK"),
         replace(complete, price_per_person=Decimal("1500.01")),
         replace(complete, board_type="BB"),

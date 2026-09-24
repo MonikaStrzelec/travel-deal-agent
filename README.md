@@ -4,7 +4,7 @@ A local Python application for finding travel deals that match a configurable bu
 trip length, departure airport and hotel-quality criteria. It remembers prices and
 avoids repeating alerts for the same trip.
 
-**Status:** offline mock by default, with opt-in ITAKA booking-price checks (manual `--force`, or continuous `--watch` once deliberately enabled) and a disabled-by-default Rainbow browser listing provider, which stays CLI-rejected under `--watch`. Unverified variants remain diagnostic. Wakacje.pl, TUI and Google are not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
+**Status:** offline mock by default, with opt-in ITAKA booking-price checks (manual `--force`, or continuous `--watch` once deliberately enabled), an enabled and live-tested Wakacje.pl listing provider (HTTP-only, no Playwright), and a disabled-by-default Rainbow browser listing provider, which stays CLI-rejected under `--watch`. Unverified variants remain diagnostic. TUI and Google are not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
 
 ## Problem and approach
 
@@ -39,7 +39,7 @@ flowchart LR
 | `pipeline.py` | Filter, shortlist, enrich and persist observations |
 | `scheduler.py` | Per-source due times, retry backoff and injected clocks |
 | `active_hours.py` | Pure configurable local time-of-day window gating provider scans |
-| `alerts.py` | Pure new-offer and cumulative price-drop decisions |
+| `alerts.py` | Pure new-offer, returning-offer and price-drop decisions |
 | `storage.py` | SQLite snapshots, history, schedules and transactional outbox |
 | `notifications.py` | Delivery interface, Telegram Bot API notifier and local logging implementation |
 | `notification_content.py` | Transport-independent message content from persisted alert snapshots |
@@ -101,24 +101,34 @@ variables or `.env`, which is ignored by Git. Generated databases and logs are a
 
 The initial policy is:
 
-- Exactly 2 travelers, 7–9 days (`min_days: 7`, `max_days: 9`).
+- Exactly 2 travelers. Stay length is currently unrestricted (`filters.min_nights` and
+  `filters.max_nights` are both `null` in production); set either to a positive integer
+  number of nights to re-enable that bound without a code change. Nights are always
+  computed as `return_date - departure_date`, the one stay-length signal that means the
+  same thing for every provider -- never from the provider-specific `Offer.number_of_days`
+  (ITAKA/Rainbow count touroperator "dni" = nights + 1; Wakacje.pl/TUI count nights directly).
 - At most 1500 PLN **per person**, inclusive; total party price is not the budget field.
 - LCJ > WAW/WMI (equal) > KTW > WRO departures.
-- At least 3 hotel stars; at least 4 in all African countries and AL, BG, HR, TR, BY, ME, LT, LV, MD, RS and XK. Overrides live in `filters.country_min_stars`; XK is the conventional Kosovo code, not an officially assigned ISO code.
+- At least 3 hotel stars (`filters.min_stars`), the same for every country. There is no
+  country whitelist: an offer is never rejected only because its source country has no
+  mapped ISO code (such an offer keeps `country` empty and shows the source's country name
+  in its destination).
 - Missing information needed by a hard filter rejects the offer. Missing Google data does not.
 
 | Source ID | Native scale | Below 1000 PLN/person | 1000–1500 PLN/person |
 | --- | --- | --- | --- |
 | `rainbow` | 0–6 | 5.0 minimum | 5.0 minimum |
 | `itaka` | 1–6 | 4.0 minimum | 5.0 minimum |
-| `wakacje.pl` | 0–10 | 7.0 minimum | 8.0 minimum |
+| `wakacje.pl` | 0–10 | 8.0 minimum (single threshold) | 8.0 minimum (single threshold) |
 | `mock` | 0–10 | Rating filter disabled | Rating filter disabled |
 
 These are configured project requirements. The current board whitelist is HB, FB and AI;
 other meal types require an explicit configuration change even if a price band allows them.
 Price bands use inclusive lower bounds and exclusive upper bounds unless
 `max_inclusive: true` is set. Bands must be ordered and non-overlapping. Add more bands
-without changing the filtering code. Unknown source IDs and uncovered price bands fail
+without changing the filtering code. A rule may instead set one price-independent
+`min_rating` with empty `price_bands` (Wakacje.pl uses `min_rating: 8`); a rule cannot use
+both. Unknown source IDs and uncovered price bands fail
 an enabled rating filter.
 
 Ranking weights cover price, airport, native rating, native review count, stars, Google
@@ -183,67 +193,287 @@ provider's own persisted due time (`interval_seconds`, or the randomized range a
 untouched while scans are skipped, so entering active hours triggers exactly one normal
 check per due provider, not a burst covering every interval missed overnight.
 
-## Windows autostart (Task Scheduler)
+## Automatyczne uruchamianie na Windows (Task Scheduler)
 
-`--watch` can start automatically at logon, independent of VS Code or any open terminal,
-using the built-in Windows Task Scheduler. No wrapper script, `.bat` or `.ps1` is needed:
-Task Scheduler can launch the interpreter directly.
+Ta sekcja pokazuje, krok po kroku, jak sprawić, żeby Travel Deal Agent uruchamiał się sam
+po zalogowaniu do Windows i działał w tle w trybie `--watch` — bez otwierania VS Code, bez
+terminala i bez żadnego dodatkowego pliku pomocniczego (`.bat`/`.cmd`/`.ps1`). Windows
+Task Scheduler potrafi uruchomić program bezpośrednio.
 
-Point the action at `pythonw.exe` instead of `python.exe`. Every `venv` created on Windows
-already ships both; `pythonw.exe` is the windowless build of the same interpreter, so no
-console window appears. Logging is unaffected — the rotating file handler still writes to
-`logs/agent.log` as usual, and the console handler's writes are simply discarded (there is
-no console for them to appear in).
+Instrukcja zakłada dokładnie taki układ folderów, jaki jest w tym repozytorium:
 
-The project is not pip-installed, so `python -m travel_deal_agent` only resolves the
-package when the process's working directory *is* the project root (the directory
-containing `travel_deal_agent/`, `config.json` and `.env`) — this is exactly what Task
-Scheduler's "Start in" field controls, and it must be set explicitly. Without it the task
-fails immediately with `No module named travel_deal_agent`. `.env` and `config.json`
-themselves are found independently of the working directory (`config.py` resolves them
-from the installed package's own file location), but the working directory is still
-required for the module import itself to succeed.
+- folder projektu: `C:\Projects\travel-deal-agent`
+- środowisko wirtualne już utworzone w: `C:\Projects\travel-deal-agent\.venv`
 
-Task Scheduler setup (no administrator rights required):
+Jeśli projekt znajduje się w innym miejscu na Twoim komputerze, wszędzie poniżej zamień
+`C:\Projects\travel-deal-agent` na swoją rzeczywistą ścieżkę.
 
-1. Open Task Scheduler → **Create Task…** (not the basic wizard, to reach every Settings
-   tab option below).
-2. **General**: give it a name; leave **"Run only when user is logged on"** selected (the
-   default). This run level never stores your Windows password anywhere.
-3. **Triggers** → New… → Begin the task: **At log on**.
-4. **Actions** → New… → Action: *Start a program*:
-   - Program/script: `<project-root>\.venv\Scripts\pythonw.exe`
+### Dlaczego używamy `pythonw.exe`, a nie `python.exe`
+
+Każde środowisko wirtualne (`.venv`) utworzone na Windows zawiera dwa programy:
+`python.exe` (otwiera czarne okno konsoli) i `pythonw.exe` (ten sam Python, ale bez okna).
+Używając `pythonw.exe`, agent działa całkowicie w tle — nie zobaczysz żadnego okna, nawet
+na pasku zadań. Nie wpływa to na logowanie: aplikacja i tak zapisuje wszystko do pliku
+(patrz sekcja o logach niżej).
+
+### Dlaczego pole "Start in" jest konieczne
+
+Ten projekt **nie jest zainstalowany jako pakiet Pythona** — uruchamiamy go poleceniem
+`python -m travel_deal_agent` bezpośrednio z folderu ze źródłami. Żeby to polecenie
+zadziałało, Windows musi "stać" (mieć jako katalog roboczy) dokładnie w folderze
+projektu — tym, w którym znajdują się m.in. `config.json`, `.env` i folder
+`travel_deal_agent`. Właśnie do tego służy pole **"Start in"** w Task Schedulerze.
+
+Jeśli pole "Start in" zostanie puste albo wskaże zły folder, zadanie się nie uruchomi —
+zakończy się od razu błędem w stylu `No module named travel_deal_agent`. To jedna z
+najczęstszych przyczyn problemów, dlatego to pole jest równie ważne jak samo "Program/script".
+
+### Krok po kroku: tworzenie zadania w Task Schedulerze
+
+Nie są potrzebne uprawnienia administratora.
+
+1. Wciśnij klawisz Windows, wpisz **Task Scheduler** (lub: Harmonogram zadań) i otwórz go.
+2. Po prawej stronie kliknij **Create Task…** (nie "Create Basic Task" — podstawowy
+   kreator nie pokazuje wszystkich opcji, których potrzebujemy).
+3. **Zakładka General:**
+   - Name: `Travel Deal Agent`
+   - Description: `Automatically runs Travel Deal Agent in watch mode.`
+   - Zostaw zaznaczone **"Run only when user is logged on"**.
+   - **Nie zaznaczaj** "Run with highest privileges".
+   - Jeśli dostępne jest pole "Configure for", wybierz **Windows 10** (na Windows 11 ten
+     wybór jest poprawny i nic nie psuje — to tylko starsza etykieta kompatybilności).
+4. **Zakładka Triggers** → **New…**:
+   - Begin the task: **At log on**
+   - Specific user: konto, na które aktualnie się logujesz w Windows
+   - Zostaw **Enabled** zaznaczone
+   - Nie ustawiaj żadnego dodatkowego harmonogramu ani "Repeat task every…" — wystarczy samo
+     logowanie.
+5. **Zakładka Actions** → **New…**:
+   - Action: **Start a program**
+   - Program/script: `C:\Projects\travel-deal-agent\.venv\Scripts\pythonw.exe`
    - Add arguments: `-m travel_deal_agent --watch`
-   - Start in: `<project-root>`
-5. **Settings**:
-   - "If the task is already running, then the following rule applies" → **Do not start a
-     new instance** (the application has no locking of its own; two schedulers must never
-     run against the same SQLite database at once).
-   - Check "If the task fails, restart every" (e.g. 1 minute), "Attempt to restart up to"
-     (e.g. 3 times).
-   - **Uncheck** "Stop the task if it runs longer than 3 days" — this box is ticked by
-     default in the creation wizard and would silently kill a long-running `--watch`.
+   - Start in: `C:\Projects\travel-deal-agent`
+6. **Zakładka Conditions** — odznacz wszystko, co jest zaznaczone domyślnie:
+   - "Start the task only if the computer is idle for" — **wyłączone**
+   - "Start the task only if the computer is on AC power" — **wyłączone**
+   - "Stop if the computer switches to battery power" — **wyłączone**
+   - "Wake the computer to run this task" — **wyłączone**
+   - "Start only if the following network connection is available" — **wyłączone**
 
-Behavior notes:
+   Dzięki temu agent będzie działał również na laptopie odłączonym od zasilania. Uwaga:
+   **to nie wybudzi uśpionego komputera** — jeśli komputer śpi lub jest wyłączony, agent po
+   prostu nie działa, aż do następnego zalogowania (patrz sekcja niżej).
+7. **Zakładka Settings:**
+   - "Allow task to be run on demand" — **włączone** (przyda się do pierwszego testu, patrz
+     niżej)
+   - "Run task as soon as possible after a scheduled start is missed" — **wyłączone**
+   - "If the task fails, restart every:" **1 minute**, "Attempt to restart up to:" **3 times**
+   - "Stop the task if it runs longer than:" — **wyłączone (odznaczone)**
+   - "If the running task does not end when requested, force it to stop" — **włączone**
+   - "If the task is already running, then the following rule applies:" →
+     **Do not start a new instance**
 
-- **Restart on failure** and **single-instance protection** are both handled by the
-  Settings-tab options above; nothing in the application enforces them.
-- **Startup after downtime**: if the machine was off during part of the active-hours
-  window and the user logs on later (e.g. the window opens at 07:00 but logon happens at
-  10:15), `run_forever`'s first `run_once()` reads the real wall clock, finds 10:15 inside
-  `07:00`–`23:30`, and immediately runs every provider whose persisted due time has already
-  elapsed — one ordinary catch-up check, not a burst per hour of missed downtime.
-- Manual runs and tests are unaffected; this section only concerns unattended `--watch`.
+   ⚠️ **Bardzo ważne:** Task Scheduler domyślnie proponuje zaznaczone
+   **"Stop the task if it runs longer than: 3 days"**. To ustawienie **trzeba koniecznie
+   odznaczyć** — Travel Deal Agent w trybie `--watch` ma działać w sposób ciągły, a nie
+   zostać automatycznie zabity po trzech dniach.
+
+   Opcja "Do not start a new instance" jest równie ważna z innego powodu: aplikacja sama
+   nie pilnuje, czy już działa gdzieś indziej, więc gdyby Task Scheduler uruchomił drugą
+   kopię, obie zaczęłyby korzystać z tej samej bazy danych (`data/offers.sqlite3`)
+   jednocześnie. Ten mechanizm w Task Schedulerze temu zapobiega.
+8. Kliknij **OK**, żeby zapisać zadanie. System może poprosić o hasło do konta Windows tylko
+   wtedy, gdy zapisuje je do uruchamiania zadania bez zalogowania — przy wybranej opcji
+   "Run only when user is logged on" **hasło nie jest nigdzie potrzebne ani zapisywane**.
+
+### Pierwsze kontrolowane uruchomienie
+
+Zanim zaufasz automatycznemu logowaniu, warto raz uruchomić zadanie ręcznie i sprawdzić,
+czy wszystko działa poprawnie:
+
+1. Otwórz **Task Scheduler**.
+2. Kliknij **Task Scheduler Library** po lewej stronie.
+3. Znajdź na liście zadanie **Travel Deal Agent**.
+4. Sprawdź, że w kolumnie Status widnieje **Ready**.
+5. Kliknij na to zadanie (zaznacz je), żeby zobaczyć jego szczegóły na dole/z prawej.
+6. Sprawdź zakładkę **Actions** w szczegółach — powinny tam być te same wartości, które
+   wpisano powyżej (Program/script, Add arguments, Start in).
+7. Kliknij **Run** po prawej stronie (w panelu akcji).
+8. Status zadania powinien zmienić się z **Ready** na **Running**.
+9. **Nie klikaj Run ponownie** — jedno uruchomienie wystarczy; kolejne kliknięcie mogłoby
+   próbować odpalić drugą kopię (chronioną przez "Do not start a new instance", ale i tak
+   nie jest to potrzebne).
+10. Odczekaj około **2 minut**, żeby agent zdążył wykonać pierwszy cykl sprawdzania ofert.
+11. Następnie sprawdź plik logu, jak opisano niżej.
+
+### Gdzie są logi i czego w nich szukać
+
+Aplikacja zapisuje logi do pliku:
+
+```
+C:\Projects\travel-deal-agent\logs\agent.log
+```
+
+(dokładnie: podfolder `logs` w folderze projektu, plik `agent.log` — tworzy go i zapisuje
+sam program przy starcie; nie trzeba go tworzyć ręcznie). Plik jest rotowany automatycznie
+(maks. ok. 2 MB, do 3 kopii zapasowych: `agent.log.1`, `agent.log.2`, `agent.log.3`), więc
+nie urośnie w nieskończoność.
+
+Najprostszy sposób podejrzenia najnowszych wpisów — w PowerShell:
+
+```powershell
+Get-Content "C:\Projects\travel-deal-agent\logs\agent.log" -Tail 40
+```
+
+Możesz też po prostu otworzyć ten plik w Notatniku.
+
+Czego szukać w logu po pierwszym uruchomieniu:
+
+- **Czy aplikacja wystartowała** — na samym początku powinna pojawić się linia
+  `Notifications: telegram` albo `Notifications: console` (informuje, czy powiadomienia
+  idą na Telegram, czy tylko lokalnie do logu).
+- **Czy zaczął się cykl sprawdzania** — linia `Search started`.
+- **Czy TUI zostało sprawdzone** — linia `Checking provider tui`, a po chwili
+  `Provider tui fetched ... offers` (jeśli w `config.json` provider `tui` ma
+  `"enabled": true`, co jest aktualnym stanem tego repozytorium).
+- **Czy Wakacje.pl zostało sprawdzone** — analogicznie `Checking provider wakacje.pl` i
+  `Provider wakacje.pl fetched ... offers` (ten provider też jest obecnie włączony).
+- **Czy wystąpił błąd** — szukaj słowa `ERROR` na początku linii albo tekstu w stylu
+  `Provider ... failed; retry in ...s` (błąd pojedynczego źródła — sam się wycofa i spróbuje
+  później) albo `Notification ... failed; will retry later` (nie udało się wysłać
+  powiadomienia na Telegram — spróbuje ponownie w kolejnym cyklu).
+- **Czy cykl się zakończył** — linia `Search finished in ...s; N unique matches` (N to
+  liczba dopasowanych ofert w tym cyklu; 0 jest normalnym wynikiem, jeśli nic nie spełniło
+  kryteriów).
+- **Czy powstały alerty/powiadomienia** — zależy od tego, co pokazała linia
+  "Notifications" na starcie:
+  - jeśli **console** — sama treść powiadomienia (nazwa hotelu, cena itd.) pojawi się
+    wprost w logu;
+  - jeśli **telegram** — treść powiadomienia trafia do Twojego czatu na Telegramie, a w
+    logu zobaczysz tylko ewentualny komunikat o niepowodzeniu wysyłki (brak linii o błędzie
+    = wysyłka się powiodła).
+
+Jeśli po ok. 2 minutach w pliku nie ma żadnych nowych linii, patrz sekcja
+"Rozwiązywanie problemów" niżej.
+
+### Jak zatrzymać agenta
+
+1. Otwórz **Task Scheduler** → **Task Scheduler Library**.
+2. Zaznacz zadanie **Travel Deal Agent**.
+3. Kliknij **End** po prawej stronie.
+4. Status zadania powinien wrócić do **Ready**.
+
+Zatrzymanie w ten sposób nie kasuje ani nie psuje zadania — możesz je uruchomić ponownie
+ręcznie (przyciskiem Run) albo poczekać na kolejne logowanie do Windows.
+
+### Co dzieje się po ponownym uruchomieniu komputera
+
+- Po ponownym uruchomieniu komputera i **zalogowaniu się do Windows**, Task Scheduler sam
+  uruchamia Travel Deal Agent — nic więcej nie trzeba klikać.
+- **Nie trzeba otwierać VS Code.**
+- **Nie trzeba otwierać żadnego terminala/PowerShella.**
+- Ponieważ używamy `pythonw.exe`, program działa **bez żadnego widocznego okna** — nie
+  zobaczysz go na pasku zadań ani na pulpicie; to normalne i zgodne z założeniem.
+- Mechanizm **"Do not start a new instance"** pilnuje, żeby nie powstała druga kopia
+  agenta (np. przy podwójnym zalogowaniu albo szybkim wylogowaniu i zalogowaniu) — dzięki
+  temu nigdy dwa procesy nie będą jednocześnie zapisywać do tej samej bazy danych.
+
+### Godziny działania agenta
+
+Agent sprawdza oferty tylko w wyznaczonych godzinach — steruje tym sekcja
+`active_hours` w pliku `config.json`. Aktualna zawartość tej sekcji w repozytorium to:
+
+```json
+"active_hours": {
+  "enabled": true,
+  "timezone": "Europe/Warsaw",
+  "active_from": "07:00",
+  "active_until": "23:30"
+}
+```
+
+Czyli obecnie: godziny aktywne to **07:00–23:30 czasu warszawskiego**, mechanizm jest
+**włączony**. Żeby to zmienić, edytuj bezpośrednio te cztery pola w `config.json`:
+
+- `enabled` — `true`/`false`: `false` całkowicie wyłącza to ograniczenie (agent sprawdza
+  oferty o każdej porze).
+- `timezone` — dowolna nazwa strefy czasowej w formacie IANA, np. `Europe/Warsaw`.
+- `active_from` — godzina rozpoczęcia (format `HH:MM`, włącznie).
+- `active_until` — godzina zakończenia (format `HH:MM`, bez tej minuty).
+
+Po zmianie `config.json` zadanie trzeba zatrzymać (patrz "Jak zatrzymać agenta") i uruchomić
+ponownie (przyciskiem Run albo przez wylogowanie/zalogowanie) — plik jest wczytywany tylko
+przy starcie procesu.
+
+Jak to działa w praktyce:
+
+- **Poza godzinami aktywnymi** dostawcy (TUI, Wakacje.pl) **nie są odpytywani** — agent nic
+  nie pobiera z internetu.
+- **Komputer może pozostać włączony** przez cały ten czas — to nie problem.
+- Sam proces agenta **nadal działa**, tylko **czeka** (nic nie robiąc, w regularnych
+  krótkich odstępach sprawdza, czy weszliśmy już w godziny aktywne).
+- Gdy zegar wejdzie w okno aktywnych godzin, agent **wraca do normalnego działania** —
+  sam, bez potrzeby restartu.
+- Po wejściu w aktywne godziny agent wykonuje **jedno normalne sprawdzenie** zaległych
+  źródeł — **nie odpala serii zaległych skanów za całą noc**, nawet jeśli minęło wiele
+  godzin.
+- Jeśli komputer jest **wyłączony albo uśpiony**, agent w tym czasie **w ogóle nie działa**
+  (nie da się tego obejść — proces musi realnie działać, żeby cokolwiek sprawdzać).
+- Po ponownym zalogowaniu się do Windows, **Task Scheduler uruchomi agenta od nowa**
+  (patrz trigger "At log on" powyżej) i od razu, jeśli akurat jesteśmy w godzinach
+  aktywnych, wykona jedno sprawdzenie zaległych źródeł.
+
+### Rozwiązywanie problemów
+
+- **Status po kliknięciu Run pozostaje "Ready" (nigdy nie zmienia się na "Running")**
+  Zwykle oznacza to, że sam program nie wystartował — najczęściej zła ścieżka w
+  "Program/script" albo w "Start in". Sprawdź dokładnie oba pola w zakładce Actions (patrz
+  krok 5 wyżej) i upewnij się, że wskazują istniejące ścieżki.
+
+- **Status szybko wraca z "Running" do "Ready"**
+  Program uruchomił się i od razu zakończył — zwykle błąd konfiguracji (np. uszkodzony lub
+  brakujący `config.json`/`.env`) albo literówka w argumentach (`-m travel_deal_agent
+  --watch`). Sprawdź `logs/agent.log` (patrz niżej) — jeśli plik jest pusty albo bardzo
+  stary, sprawdź w Task Schedulerze zakładkę **History** dla tego zadania — pokaże ona kod
+  zakończenia procesu nawet bez żadnego okna na ekranie.
+
+- **Brak logów / plik `logs\agent.log` się nie zmienia**
+  Upewnij się, że proces w ogóle działa (status **Running** w Task Schedulerze). Jeśli
+  status wraca do Ready, patrz punkt wyżej. Jeśli status pokazuje Running, ale plik mimo to
+  się nie zmienia po kilku minutach, sprawdź w Menedżerze zadań Windows, czy proces
+  `pythonw.exe` faktycznie jest widoczny na liście procesów.
+
+- **Komputer został uśpiony**
+  Agent w tym czasie nie działa (patrz sekcja "Godziny działania agenta" wyżej) — to
+  oczekiwane zachowanie, nie błąd. Po przebudzeniu i ponownym zalogowaniu Task Scheduler
+  uruchomi go od nowa dzięki triggerowi "At log on".
+
+- **Zmieniono lokalizację folderu projektu**
+  Trzeba ręcznie poprawić zadanie w Task Schedulerze: otwórz właściwości zadania →
+  zakładka **Actions** → edytuj akcję → zaktualizuj zarówno **Program/script** (nowa
+  ścieżka do `\.venv\Scripts\pythonw.exe`), jak i **Start in** (nowa ścieżka do folderu
+  projektu). Obie ścieżki muszą wskazywać na to samo, nowe miejsce.
+
+- **Usunięto lub odtworzono `.venv`**
+  Po ponownym utworzeniu środowiska wirtualnego upewnij się, że plik
+  `pythonw.exe` rzeczywiście istnieje pod ścieżką wpisaną w "Program/script"
+  (`<folder-projektu>\.venv\Scripts\pythonw.exe`). Jeśli `.venv` zostało odtworzone w innym
+  miejscu albo pod inną nazwą folderu, popraw tę ścieżkę w zadaniu tak samo, jak w punkcie
+  wyżej.
 
 ## Example flow
 
 1. The mock adapter returns four fictional offers with future departure dates.
-2. Two pass the configured budget, hotel-star and trip filters.
+2. Three pass the configured budget, hotel-star and trip filters.
 3. Matching trips are ranked; optional external verification remains disabled.
 4. SQLite records all observations and queues new matching-trip alerts.
-5. Local logs report two alerts. Repeating the same check produces no duplicate alerts.
-6. A later cumulative drop of at least `price_drop_pln` below the lowest alerted price
-   creates a price-drop notification. Oscillation to a previously alerted price does not.
+5. Local logs report three alerts. Repeating the same check produces no duplicate alerts:
+   an unchanged offer that is still present in the next scan is never re-sent.
+6. Any later drop below the lowest alerted price creates a price-drop notification; there is
+   no minimum drop amount. A higher price, or oscillation back to a previously alerted
+   price, does not.
+7. An offer group that had no eligible observation for `alert_rearm_hours` (24 by default)
+   and then qualifies again is announced again as a new offer.
 
 Mock dates move daily; a different departure date represents a new trip. Single-check
 results contain offers from sources checked during that run, not a historical dashboard.
@@ -389,7 +619,8 @@ Access uses ordinary HTTP with an identifying user agent, no cookies, redirects 
    group and displayed booking totals. Conflicting or unsupported details stay diagnostic.
 
 No departure dates or destinations are hard-coded into queries. Airport and
-`min_days` / nullable `max_days` rules are local filters. The default last-minute
+nullable `min_nights`/`max_nights` rules are local filters, applied against nights
+computed from `departure_date`/`return_date`. The default last-minute
 listing is only partial coverage of ITAKA inventory; source-side filter parameters
 are not assumed. Listing duration is the provider's trip days, not hotel nights.
 Return date comes from the arrival-home flight, which can be later than hotel checkout.
@@ -417,7 +648,7 @@ this does not guarantee a stable inventory snapshot across multiple pages.
 contains mandatory group-level fees, currently the observed TFG and TFP types.
 `booking_total_price = package_price + sum(operator_mandatory_fees)`.
 `total_price` retains that same booking amount and `price_per_person` is its half.
-The PLN 1500 budget, meal/rating bands, ranking and price-drop alerts all use this
+The PLN 1500 budget, meal/rating rules, ranking and price-drop alerts all use this
 booking price per person. `price_is_complete=true` confirms the operator booking,
 not the absence of every possible travel expense.
 
