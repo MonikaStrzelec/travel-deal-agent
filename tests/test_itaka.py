@@ -3,6 +3,7 @@
 import json
 from dataclasses import replace
 from decimal import Decimal
+from urllib.parse import urlencode
 
 import pytest
 
@@ -13,6 +14,22 @@ from travel_deal_agent.providers.http import Response
 from travel_deal_agent.providers.itaka import ItakaProvider, robots_policy
 from travel_deal_agent.providers.itaka_data import normalize_rate, parse_page
 from travel_deal_agent.storage import Store
+
+
+class FlakyTransport:
+    """Like FakeTransport, but a `None` entry raises a synthetic transient timeout."""
+
+    def __init__(self, responses: list[Response | None]) -> None:
+        self.responses = responses
+        self.urls: list[str] = []
+
+    def get(self, url: str, timeout: float) -> Response:
+        assert timeout > 0
+        self.urls.append(url)
+        item = self.responses.pop(0)
+        if item is None:
+            raise TimeoutError("synthetic timeout")
+        return item
 
 
 @pytest.fixture
@@ -88,6 +105,17 @@ def test_normalization_and_price_gate(
     assert store.get_offer("itaka", offer.offer_id) is not None
 
 
+def test_poznan_departure_airport_mapping(raw: dict[str, object]) -> None:
+    # Arrange: tests/fixtures/itaka/FUERIOC_mapping.json (real detail
+    # reconnaissance) ties title "Poznań" to IATA code "POZ" -- see
+    # itaka_data.AIRPORTS.
+    changed = json.loads(json.dumps(raw, ensure_ascii=False).replace("Łódź", "Poznań"))
+    # Act
+    offer = normalize_rate(changed, [])
+    # Assert
+    assert offer.departure_airport == "POZ"
+
+
 def test_identity_excludes_price_but_includes_variant(raw: dict[str, object]) -> None:
     # Arrange
     original = normalize_rate(raw, [])
@@ -115,7 +143,9 @@ def test_pagination(raw: dict[str, object], settings: Settings) -> None:
             response(html([second], skip=1, count=2)),
         ]
     )
-    provider = ItakaProvider(settings.providers["itaka"], transport, sleep=lambda _: None)
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
     # Act
     offers = provider.fetch()
     # Assert
@@ -127,13 +157,259 @@ def test_pagination(raw: dict[str, object], settings: Settings) -> None:
     ]
 
 
+def test_transient_network_error_on_later_page_keeps_earlier_offers(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: page 1 succeeds (1 of 2 total offers); page 2 hits a transient
+    # network error. Matches wakacje.py's documented policy: no retry, but the
+    # already-parsed page-1 offer is not discarded.
+    transport = FlakyTransport(
+        [response("User-agent: *\nDisallow: /api*"), response(html([raw], count=2)), None]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+    # Act
+    offers = provider.fetch()
+    # Assert
+    assert len(offers) == 1
+    assert len(transport.urls) == 3
+
+
+def test_transient_network_error_on_detail_request_keeps_listing_only_offer(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: the one listing page resolves a detail-eligible candidate, but
+    # the detail request itself hits a transient network error. The listing
+    # offer must survive (unconfirmed), and the whole cycle must not abort.
+    link = "/wczasy/test,fixture-1/?" + urlencode({"id[0]": "fixture-1"})
+    data = {
+        "props": {
+            "pageProps": {
+                "initialQueryState": {
+                    "queries": [
+                        {
+                            "queryKey": ["rates", {"skip": 0, "take": 1}],
+                            "state": {
+                                "data": {
+                                    "main": {"multiRoomRates": {"list": [raw], "ratesCount": 1}}
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    body = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(data)
+        + f'</script><a href="{link}">Offer</a>'
+    )
+    transport = FlakyTransport([response("User-agent: *\nDisallow: /api*"), response(body), None])
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+    # Act
+    offers = provider.fetch()
+    # Assert
+    assert len(offers) == 1
+    assert not offers[0].price_is_complete
+    assert len(transport.urls) == 3
+
+
+def _link_page(rates: list[dict[str, object]], links: dict[str, str], take: int) -> str:
+    """A listing page with one <a href> detail link per rate, keyed by rateId."""
+    data = {
+        "props": {
+            "pageProps": {
+                "initialQueryState": {
+                    "queries": [
+                        {
+                            "queryKey": ["rates", {"skip": 0, "take": take}],
+                            "state": {
+                                "data": {
+                                    "main": {
+                                        "multiRoomRates": {"list": rates, "ratesCount": len(rates)}
+                                    }
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    anchors = "".join(f'<a href="{href}">{rate_id}</a>' for rate_id, href in links.items())
+    return (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(data)
+        + "</script>"
+        + anchors
+    )
+
+
+def _rate_link(rate_id: str) -> str:
+    return "/wczasy/test," + rate_id + "/?" + urlencode({"id[0]": rate_id})
+
+
+def test_no_detail_request_when_every_candidate_is_ineligible(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: the only candidate on the page has an unmapped departure
+    # airport, so it can never pass filtering.matches_criteria. No detail
+    # request should be attempted at all -- not even a "best effort" one.
+    ineligible = json.loads(json.dumps(raw))
+    ineligible["segments"][0]["departure"]["title"] = "Nieznane Miasto"
+    body = _link_page([ineligible], {"fixture-1": _rate_link("fixture-1")}, take=1)
+    transport = FakeTransport([response("User-agent: *\nDisallow: /api*"), response(body)])
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+    # Act
+    offers = provider.fetch()
+    # Assert: no detail request (2 requests total: robots + listing), and the
+    # listing-only offer stays unconfirmed.
+    assert len(transport.urls) == 2
+    assert len(offers) == 1
+    assert offers[0].price_is_complete is False
+
+
+def test_several_eligible_candidates_keep_listing_order_and_the_detail_limit(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: two candidates on one page, BOTH eligible from listing data
+    # alone. With the default max_detail_requests=1, the request must go to
+    # whichever is first in the listing's own order (fixture-1), never both,
+    # and the order must not be disturbed just because a second one also
+    # qualifies.
+    second = json.loads(json.dumps(raw).replace("fixture-1", "fixture-2"))
+    body = _link_page(
+        [raw, second],
+        {"fixture-1": _rate_link("fixture-1"), "fixture-2": _rate_link("fixture-2")},
+        take=2,
+    )
+    transport = FakeTransport(
+        [
+            response("User-agent: *\nDisallow: /api*"),
+            response(body),
+            response("<html>no detail data</html>"),
+        ]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+    # Act
+    provider.fetch()
+    # Assert: exactly one detail request, for the first-listed candidate.
+    assert len(transport.urls) == 3
+    assert "fixture-1" in transport.urls[-1]
+    assert "fixture-2" not in transport.urls[-1]
+
+
+def test_pagination_continues_when_page_one_has_no_detail_candidate(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: page 1's only candidate is ineligible (no detail request should
+    # be spent on it); pagination must still continue to page 2 exactly as
+    # before, and page 2's candidate is kept as a normal listing-only offer.
+    ineligible = json.loads(json.dumps(raw))
+    ineligible["segments"][0]["departure"]["title"] = "Nieznane Miasto"
+    second = json.loads(json.dumps(raw).replace("fixture-1", "fixture-2"))
+    transport = FakeTransport(
+        [
+            response("User-agent: *\nDisallow: /api*"),
+            response(html([ineligible], count=2)),
+            response(html([second], skip=1, count=2)),
+        ]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+    # Act
+    offers = provider.fetch()
+    # Assert: both pages fetched, no detail request anywhere.
+    assert len(offers) == 2
+    assert transport.urls == [
+        "https://www.itaka.pl/robots.txt",
+        "https://www.itaka.pl/last-minute/",
+        "https://www.itaka.pl/last-minute/?page=2",
+    ]
+    assert all(not o.price_is_complete for o in offers)
+
+
+def test_shortlist_prefers_the_eligible_candidate_for_the_scarce_detail_request(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: two listing candidates on one page. The first (listed first, so
+    # it would have won under plain listing-order selection) has an unmapped
+    # departure airport and can never pass filtering.matches_criteria, so it is
+    # now excluded from the shortlist entirely (not merely deprioritized); the
+    # second is otherwise identical but has a real, allowed airport. With only
+    # one detail request available (max_detail_requests=1), it must go to the
+    # eligible candidate, not the one listed first.
+    ineligible = json.loads(json.dumps(raw).replace("fixture-1", "fixture-2"))
+    ineligible["segments"][0]["departure"]["title"] = "Nieznane Miasto"
+
+    def rate_link(rate_id: str) -> str:
+        return "/wczasy/test," + rate_id + "/?" + urlencode({"id[0]": rate_id})
+
+    data = {
+        "props": {
+            "pageProps": {
+                "initialQueryState": {
+                    "queries": [
+                        {
+                            "queryKey": ["rates", {"skip": 0, "take": 2}],
+                            "state": {
+                                "data": {
+                                    "main": {
+                                        "multiRoomRates": {
+                                            "list": [ineligible, raw],
+                                            "ratesCount": 2,
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    body = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(data)
+        + "</script>"
+        + f'<a href="{rate_link("fixture-2")}">A</a>'
+        + f'<a href="{rate_link("fixture-1")}">B</a>'
+    )
+    transport = FakeTransport(
+        [
+            response("User-agent: *\nDisallow: /api*"),
+            response(body),
+            response("<html>no detail data</html>"),
+        ]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+    # Act
+    provider.fetch()
+    # Assert: the one detail request went to the eligible candidate
+    # (fixture-1), not the ineligible one listed first (fixture-2).
+    assert len(transport.urls) == 3
+    assert "fixture-1" in transport.urls[-1]
+    assert "fixture-2" not in transport.urls[-1]
+
+
 @pytest.mark.parametrize("status", [301, 403, 429, 503])
 def test_no_retry_or_redirect(status: int, settings: Settings) -> None:
     # Arrange
     transport = FakeTransport([response("", status)])
     # Act / Assert
     with pytest.raises(ValueError, match="HTTP"):
-        ItakaProvider(settings.providers["itaka"], transport).fetch()
+        ItakaProvider(settings.providers["itaka"], settings.filters, transport).fetch()
     assert len(transport.urls) == 1
 
 
@@ -146,7 +422,7 @@ def test_robots_fail_closed(robots: str, settings: Settings) -> None:
     transport = FakeTransport([response(robots)])
     # Act / Assert
     with pytest.raises(ValueError):
-        ItakaProvider(settings.providers["itaka"], transport).fetch()
+        ItakaProvider(settings.providers["itaka"], settings.filters, transport).fetch()
     assert len(transport.urls) == 1
 
 
@@ -161,7 +437,9 @@ def test_repeated_page_rejected(raw: dict[str, object], settings: Settings) -> N
     )
     # Act / Assert
     with pytest.raises(ValueError, match="pagination"):
-        ItakaProvider(settings.providers["itaka"], transport, sleep=lambda _: None).fetch()
+        ItakaProvider(
+            settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+        ).fetch()
 
 
 def test_schema_change_fails_closed() -> None:
@@ -218,7 +496,7 @@ def test_configurable_page_and_request_budgets(
         [response("User-agent: *\nDisallow: /api")] + [response(p) for p in pages]
     )
     # Act
-    offers = ItakaProvider(cfg, transport, sleep=lambda _: None).fetch()
+    offers = ItakaProvider(cfg, settings.filters, transport, sleep=lambda _: None).fetch()
     # Assert
     assert len(offers) == expected
     assert len(transport.urls) == expected + 1
@@ -252,7 +530,7 @@ def test_timeout_propagates_without_retry(settings: Settings) -> None:
 
     # Arrange / Act / Assert
     with pytest.raises(TimeoutError):
-        ItakaProvider(settings.providers["itaka"], TimeoutTransport()).fetch()
+        ItakaProvider(settings.providers["itaka"], settings.filters, TimeoutTransport()).fetch()
 
 
 def test_unknown_source_fields_remain_unknown(raw: dict[str, object]) -> None:

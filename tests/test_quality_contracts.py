@@ -172,6 +172,56 @@ def test_tui_cycle_seconds_rejects_wrong_type(
         load_settings()
 
 
+def test_itaka_max_requests_must_cover_pages_and_detail_requests(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One robots.txt fetch + max_pages listing pages + max_detail_requests detail
+    # confirmations must all fit in max_requests (itaka.py fetch() shares one
+    # RequestBudget across all of them); 1 + 2 + 1 = 4, so 3 is not enough.
+    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    raw["providers"]["itaka"]["max_pages"] = 2
+    raw["providers"]["itaka"]["max_detail_requests"] = 1
+    raw["providers"]["itaka"]["max_requests"] = 3
+    config_file = tmp_path / "invalid.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+
+    with pytest.raises(ValueError, match="ITAKA max_requests must cover"):
+        load_settings()
+
+
+def test_itaka_max_requests_exactly_covers_the_budget(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The production default (max_pages=2, max_detail_requests=1) needs exactly
+    # 4 requests (1 robots.txt + 2 listing + 1 detail); this must not raise.
+    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    raw["providers"]["itaka"]["max_pages"] = 2
+    raw["providers"]["itaka"]["max_detail_requests"] = 1
+    raw["providers"]["itaka"]["max_requests"] = 4
+    config_file = tmp_path / "invalid.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+
+    load_settings()
+
+
+def test_itaka_unlimited_pages_skips_the_budget_arithmetic_check(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # max_pages=null means unbounded pagination -- the exact request count is
+    # not known upfront (RequestBudget's own deadline/max_requests guard the
+    # runtime instead), so the static arithmetic check does not apply.
+    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    raw["providers"]["itaka"]["max_pages"] = None
+    raw["providers"]["itaka"]["max_requests"] = 1
+    config_file = tmp_path / "invalid.json"
+    config_file.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+
+    load_settings()
+
+
 def test_tui_provider_rejects_unknown_field(
     settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

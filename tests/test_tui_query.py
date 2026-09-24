@@ -112,9 +112,22 @@ def test_board_facets_cover_ai_fb_hb(settings: Settings) -> None:
 
 
 def test_unconfirmed_board_facet_is_rejected(settings: Settings) -> None:
-    # Act / Assert
+    # Act / Assert: none of the allowed boards have a confirmed TUI facet.
     with pytest.raises(ValueError, match="No confirmed TUI facet"):
         build_search_path(filters(settings, allowed_boards=["UAI"]))
+
+
+def test_zo_is_silently_excluded_from_the_tui_query(settings: Settings) -> None:
+    # Arrange: ZO is a Wakacje.pl-only board (boards.py) with no TUI facet; TUI
+    # simply never returns it, so it must not block building the query for the
+    # boards TUI does support -- unlike test_unconfirmed_board_facet_is_rejected,
+    # where NO allowed board has a facet.
+    # Act
+    url = build_search_path(filters(settings, allowed_boards=["ZO", "HB", "FB", "AI"]))
+    # Assert: the confirmed facets are still present; nothing ZO-shaped is added.
+    assert "GT06-AI%20GT06-XX%20GT06-AIP" in url
+    assert "GT06-FB%20GT06-FBP" in url
+    assert "GT06-HB%20GT06-HBP" in url
 
 
 @pytest.mark.parametrize("stars,code", [(3, "3s"), (4, "4s"), (5, "5s")])

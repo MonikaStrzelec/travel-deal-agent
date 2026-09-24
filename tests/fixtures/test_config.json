@@ -132,6 +132,7 @@
     "board_scores": {
       "RO": 0,
       "BB": 0.2,
+      "ZO": 0.3,
       "HB": 0.4,
       "FB": 0.6,
       "AI": 0.8,
@@ -190,7 +191,7 @@
       "interval_min_seconds": 480,
       "interval_max_seconds": 900,
       "max_pages": 2,
-      "max_requests": 3,
+      "max_requests": 4,
       "max_detail_requests": 1,
       "timeout_seconds": 15,
       "cycle_seconds": 60,

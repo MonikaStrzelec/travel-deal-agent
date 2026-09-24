@@ -122,8 +122,10 @@ The initial policy is:
 | `wakacje.pl` | 0–10 | 8.0 minimum (single threshold) | 8.0 minimum (single threshold) |
 | `mock` | 0–10 | Rating filter disabled | Rating filter disabled |
 
-These are configured project requirements. The current board whitelist is HB, FB and AI;
-other meal types require an explicit configuration change even if a price band allows them.
+These are configured project requirements. The current board whitelist is HB, FB, AI and ZO
+("Według programu" -- Wakacje.pl's itinerary-based board, service code 5, accepted as a
+normal canonical board but never treated as better than HB/FB/AI); other meal types require
+an explicit configuration change even if a price band allows them.
 Price bands use inclusive lower bounds and exclusive upper bounds unless
 `max_inclusive: true` is set. Bands must be ordered and non-overlapping. Add more bands
 without changing the filtering code. A rule may instead set one price-independent
@@ -627,22 +629,37 @@ Return date comes from the arrival-home flight, which can be later than hotel ch
 
 `max_pages` defaults to 2; `ITAKA_MAX_PAGES` can override it with a positive integer.
 Set JSON `max_pages` to null for traversal until the listing ends, still bounded by
-`max_requests` (default 3, including robots and details), `cycle_seconds` (60),
-`timeout_seconds` (15) and `request_gap_seconds` (5). Increase budgets deliberately
-when raising the page limit. A robots crawl delay can increase the gap. Socket timeout
-is an inactivity limit; the cycle deadline is checked between requests and after reads,
-not a hard process cancellation timer. Responses are limited to 4 MB. HTTP failures,
-429 and redirects stop without immediate retries. Unreadable detail HTML remains
-diagnostic and consumes its request allowance. The scheduler retains its
-deterministic error backoff regardless of whether ITAKA runs once (`--force`) or
-continuously (`--watch`, once deliberately enabled) — see "Configuration" above for
-`interval_min_seconds`/`interval_max_seconds`.
+`max_requests` (default 4: 1 robots.txt + up to 2 listing pages + up to 1 detail
+request), `cycle_seconds` (60), `timeout_seconds` (15) and `request_gap_seconds` (5).
+`config.py::validate_options` rejects a `max_requests` too small to cover
+`1 + max_pages + max_detail_requests` whenever `max_pages` is a concrete number (not
+null); increase `max_requests` deliberately when raising either limit. A robots crawl
+delay can increase the gap. Socket timeout is an inactivity limit; the cycle deadline
+is checked between requests and after reads, not a hard process cancellation timer.
+Responses are limited to 4 MB. A policy failure (HTTP 403/429/5xx, a redirect, or a
+robots/challenge-shaped response) still stops the whole cycle without any retry, same
+as before. A genuinely transient network error (a socket timeout or DNS/connection
+failure, never a policy failure) instead stops just that request -- keeping every
+offer already parsed from earlier pages, or leaving one candidate's price diagnostic
+if it happens on the detail request -- the same distinction `wakacje.py` documents and
+applies. The scheduler retains its deterministic error backoff regardless of whether
+ITAKA runs once (`--force`) or continuously (`--watch`, once deliberately enabled) —
+see "Configuration" above for `interval_min_seconds`/`interval_max_seconds`.
 
 `max_detail_requests` defaults to 1 (0 disables detail checks). Details are checked
-after each listing page, within the same budget. The default can therefore cover one
-listing page and one detail page, not every candidate. Exhausted budgets leave the
-remaining offers diagnostic. Changing listing counts or repeated variants are errors;
-this does not guarantee a stable inventory snapshot across multiple pages.
+after each listing page, within the same budget; with the default budget above, one
+listing page's worth of pagination and one detail confirmation are both reachable in
+the same cycle. A candidate only ever receives a detail request if it would already
+pass every hard filter from listing-only data (price, airport, stars, rating band and
+board -- everything `filtering.matches_criteria` checks except price completeness,
+which only a detail request itself can establish; reused as-is, no separate scoring or
+classification). A candidate that is already ineligible is skipped outright, never
+"tried anyway" -- if nothing on the page qualifies, zero detail requests are made that
+page, and every listing offer stays `price_is_complete=False`. Among several still-
+eligible candidates, the request goes to whichever is first in the listing's own order
+(never reordered by price or anything else). Exhausted budgets leave the remaining
+offers diagnostic. Changing listing counts or repeated variants are errors; this does
+not guarantee a stable inventory snapshot across multiple pages.
 
 `package_price` is the base price for the entire party. `operator_mandatory_fees`
 contains mandatory group-level fees, currently the observed TFG and TFP types.
@@ -690,8 +707,9 @@ separately reported local costs:
 | PLN 1000 through PLN 1500 inclusive | HB |
 
 FB, AI and UAI satisfy both meal bands, but still need to pass every other hard filter,
-including the overall price cap. `filters.allowed_boards` remains an additional whitelist;
-it cannot replace the price-band requirement. RO,
+including the overall price cap. ZO only satisfies the below-PLN-1000 band (it ranks above
+BB but below HB, so the PLN 1000-1500 band's HB minimum still rejects it). `filters.allowed_boards`
+remains an additional whitelist; it cannot replace the price-band requirement. RO,
 self-catering, unknown and ambiguous meal data fail the hard filter. `boards.py`
 normalizes names separately from source codes; an unknown ITAKA code requires an
 unambiguous full name, and conflicting known code/name pairs are rejected.
@@ -703,7 +721,7 @@ final amount and confirm its completeness. ITAKA diagnostic quotes remain inelig
 Band boundaries use Decimal, and configuration validation rejects gaps, overlaps,
 unknown minimum meals and incomplete coverage of the configured budget.
 
-`ranking.board_scores` and the `board` weight reward BB < HB < FB < AI < UAI.
+`ranking.board_scores` and the `board` weight reward BB < ZO < HB < FB < AI < UAI.
 Country overrides use uppercase alpha-2 codes (plus XK) in configuration, not a
 hard-coded country list in filtering logic. The default includes all 54 African
 states and the requested European exceptions. Independent parameterized tests cover

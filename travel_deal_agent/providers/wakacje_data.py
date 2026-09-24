@@ -110,14 +110,17 @@ COUNTRIES = {
 # `serviceDesc` free text is only a finer label WITHIN that bucket (e.g. "Ultra All
 # Inclusive" vs. "All Inclusive", both code 1) -- never a sign the code itself is
 # ambiguous. Code 4 (wlasne/self-catering) maps to RO, matching
-# `boards.CANONICAL_BOARDS`; code 5 (ZO/itinerary-based board) has no canonical
-# equivalent and is intentionally left unmapped rather than guessed.
+# `boards.CANONICAL_BOARDS`. Code 5 ("Według programu" / itinerary-based board) is
+# a deliberate business decision to accept ZO as a normal, canonical board
+# (boards.CANONICAL_BOARDS, boards.BOARD_ORDER) -- ranked below HB/FB/AI (never
+# treated as better), still eligible for filtering.matches() and ranking like any
+# other board once "ZO" is present in filters["allowed_boards"].
 SERVICE_BOARDS: dict[int, str | None] = {
     1: "AI",
     2: "HB",
     3: "BB",
     4: "RO",
-    5: None,
+    5: "ZO",
     6: "FB",
 }
 

@@ -12,7 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from travel_deal_agent.config import Settings
-from travel_deal_agent.config_types import ProviderConfig
+from travel_deal_agent.config_types import FilterConfig, ProviderConfig
 from travel_deal_agent.filtering import matches
 from travel_deal_agent.models import LocalMandatoryCost, Offer, duplicate_key
 from travel_deal_agent.notification_content import NotificationMessage
@@ -31,6 +31,31 @@ class Evidence(TypedDict):
     summary: dict[str, object]
     local_information: list[dict[str, object]]
     legacy_offer_id: str
+
+
+def permissive_filters(settings: Settings) -> FilterConfig:
+    """A filters override that makes the real captured fixtures' listing price
+    (well above the real PLN 1500 business cap) eligible for a detail request.
+
+    Used only by tests below that exercise `confirm_detail` mechanics (mismatch
+    diagnostics, budget/failure behavior) through `ItakaProvider.fetch()`'s
+    shortlist, which now skips a candidate ineligible under `settings.filters`
+    (see `itaka.py`). Business price/rating thresholds are covered separately
+    (tests/test_business_rules.py, tests/test_itaka.py's shortlist tests) --
+    this override exists so those thresholds don't gate unrelated detail tests.
+    """
+    filters: FilterConfig = deepcopy(settings.filters)
+    filters["max_price"] = "10000"
+    filters["board_price_bands"] = [
+        {"min_price": "0", "max_price": "10000", "min_board": "BB", "max_inclusive": True}
+    ]
+    filters["provider_ratings"]["itaka"] = {
+        "enabled": True,
+        "scale": {"min": 1, "max": 6},
+        "min_rating": 1,
+        "price_bands": [],
+    }
+    return filters
 
 
 def evidence(code: str = "RMFTULR") -> Evidence:
@@ -407,6 +432,11 @@ def test_captured_booking_prices_and_legacy_identity(
         (("variant", "price", "actualWithAdditionalPayments", "amount"), 5859),
         (("summary", "totalPrice"), 5859),
         (("variant", "price", "actualPrice", "currency"), "EUR"),
+        # Reverse direction: the LISTING's own currency disagrees with the
+        # detail page's (still-PLN) amounts -- itaka_details.py's
+        # `if any(m.currency != currency for m in amounts)` check, exercised
+        # from the listing side rather than the detail side.
+        (("listing", "currency"), "EUR"),
         (("variant", "price", "actualPrice", "amount"), True),
         (("variant", "price", "actualPrice", "amount"), "5798"),
         (("variant", "price", "additionalPayments", 0, "type"), "UNKNOWN"),
@@ -777,7 +807,9 @@ def test_provider_preserves_mismatch_diagnostic(
             Response(200, detail_html(fixture), {}),
         ]
     )
-    provider = ItakaProvider(settings.providers["itaka"], transport, sleep=lambda _: None)
+    provider = ItakaProvider(
+        settings.providers["itaka"], permissive_filters(settings), transport, sleep=lambda _: None
+    )
     # Act
     offers = provider.fetch()
     # Assert
@@ -812,7 +844,7 @@ def test_provider_detail_budget_and_failure_behavior(mode: str, settings: Settin
             ),
         ]
     )
-    provider = ItakaProvider(cfg, transport, sleep=lambda _: None)
+    provider = ItakaProvider(cfg, permissive_filters(settings), transport, sleep=lambda _: None)
     # Act / Assert
     if mode in {"robots", "http"}:
         with pytest.raises(ValueError):
@@ -875,4 +907,4 @@ def test_pagination_rejects_duplicate_and_changing_inventory(kind: str, settings
     )
     # Act / Assert
     with pytest.raises(ValueError, match="repeated|count changed"):
-        ItakaProvider(cfg, transport, sleep=lambda _: None).fetch()
+        ItakaProvider(cfg, settings.filters, transport, sleep=lambda _: None).fetch()

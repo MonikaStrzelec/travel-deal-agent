@@ -93,13 +93,23 @@ def _airports(filters: FilterConfig) -> list[str]:
 
 
 def _boards(filters: FilterConfig) -> list[str]:
+    """Search only the confirmed subset of `allowed_boards` TUI actually has a facet for.
+
+    `allowed_boards` is a cross-provider business whitelist (e.g. it now also
+    includes "ZO", a Wakacje.pl-only board with no TUI equivalent). A board this
+    provider cannot search for is simply never returned by TUI anyway, so
+    dropping it here loses no filtering integrity -- `filtering.matches()`
+    still enforces the full whitelist on whatever TUI actually returns. This
+    only fails when NONE of the allowed boards have a confirmed TUI facet,
+    since that would silently search for nothing.
+    """
     boards = filters["allowed_boards"]
     if not boards:
         raise ValueError("No allowed board configured")
-    unmapped = [b for b in boards if b not in BOARD_FACETS]
-    if unmapped:
-        raise ValueError(f"No confirmed TUI facet for board(s): {unmapped}")
-    return [BOARD_FACETS[b] for b in boards]
+    confirmed = [b for b in boards if b in BOARD_FACETS]
+    if not confirmed:
+        raise ValueError(f"No confirmed TUI facet for any allowed board: {boards}")
+    return [BOARD_FACETS[b] for b in confirmed]
 
 
 def _star_code(filters: FilterConfig) -> str:
