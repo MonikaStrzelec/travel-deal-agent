@@ -542,7 +542,8 @@ The current outbox represents one selected transport, not simultaneous multi-cha
 
 Messages contain hotel, country/region, per-person price, total for the actual party
 (currently two travelers), price per person per night, duration, airport, stars, native rating
-and scale, verified Google/Tripadvisor rating, board, offer URL, an attractiveness category (see
+and scale, verified Google/Tripadvisor rating, board, offer URL, a typical daytime temperature for
+the departure month (Climate V0, see below), an attractiveness category (see
 below), and any price drop relative to the previous alert baseline. `final_score` is never shown
 in the message (it still drives internal sorting only). Missing information is explicit. If total
 price is missing but party size and per-person price are known, the derived total is marked
@@ -559,10 +560,24 @@ Example fictional message (compact Telegram format, `notification_content.Notifi
 💰 1393 zł/os. (2786 zł / 2 osoby) • 199 zł/os./noc
 🛫 Warszawa • 8 dni / 7 nocy
 📅 18.05 (wtorek) – 25.05.2027 (wtorek)
+☀️ Typowo w maju: ok. 22°C
 
 🔗 Zobacz ofertę
 ℹ️ Cena z listingu — niepotwierdzona.
 ```
+
+### Climate V0
+
+`climate.py` adds the one-line `☀️` "typical daytime" temperature shown above: a **static**,
+**region-level** table of typical/average daily *maximum* temperature per month (never a forecast,
+a 24h mean, a nighttime value, or "feels like"), matched against `Offer.destination` through an
+explicit, hand-written alias list -- no fuzzy matching, no geocoding, no live weather API. A
+country-level fallback exists only for the handful of countries (Malta, Albania, Cyprus, Bulgaria)
+where every touristic destination this project has observed sits in one climatically uniform band;
+everywhere else (e.g. Spain, which spans both the seasonal mainland coast and the mild, near-constant
+Canary Islands) an unrecognized destination simply omits the line rather than showing a guess or a
+placeholder. Purely informational: it never affects filtering, eligibility, attractiveness
+(HOT/GOOD/MATCH), `final_score`, price history or alert classification.
 
 ### Attractiveness classification (V0)
 

@@ -121,9 +121,13 @@ def test_full_compact_format_matches_the_agreed_layout(
     offer: Offer, store: Store, settings: Settings
 ) -> None:
     """One end-to-end shape check against the format agreed with the project
-    owner: hotel/rating+board/price+price-per-night/airport+duration/date-range,
-    in that order, with the attractiveness header on top and the link+
-    disclaimer block at the bottom.
+    owner: hotel/rating+board/price+price-per-night/airport+duration/date-range/
+    climate, in that order, with the attractiveness header on top and the
+    link+disclaimer block at the bottom.
+
+    "Słoneczny Brzeg" in May resolves through Climate V0's region alias
+    (climate.py), giving the "sun" line its 22C -- see test_climate.py for
+    the region-alias/country-fallback rules this depends on.
 
     This offer's own real classification under the accepted V0 rule is MATCH
     (VALUE/HOTEL QUALITY/AIRPORT/BOARD all land on "normal", no strong area) --
@@ -166,9 +170,10 @@ def test_full_compact_format_matches_the_agreed_layout(
     assert lines[3] == "💰 1393 zł/os. (2786 zł / 2 osoby) • 199 zł/os./noc"
     assert lines[4] == "🛫 Warszawa • 8 dni / 7 nocy"
     assert lines[5] == "📅 18.05 (wtorek) – 25.05.2027 (wtorek)"
-    assert lines[6] == ""
-    assert lines[7] == '🔗 <a href="https://example.invalid/oferty/meridian">Zobacz ofertę</a>'
-    assert lines[8] == "ℹ️ Cena z listingu — niepotwierdzona."
+    assert lines[6] == "☀️ Typowo w maju: ok. 22°C"
+    assert lines[7] == ""
+    assert lines[8] == '🔗 <a href="https://example.invalid/oferty/meridian">Zobacz ofertę</a>'
+    assert lines[9] == "ℹ️ Cena z listingu — niepotwierdzona."
 
 
 def test_date_range_shows_year_on_both_sides_when_they_differ(
@@ -199,3 +204,40 @@ def test_html_special_characters_are_escaped(
     assert "&amp;" in message
     assert 'href="https://example.invalid/o?a=1&amp;b=2"' in message
     assert "Zobacz ofertę</a>" in message
+
+
+def test_climate_line_shown_for_a_recognized_region(
+    offer: Offer, store: Store, settings: Settings
+) -> None:
+    candidate = replace(
+        offer,
+        country="EG",
+        destination="Hurghada / Hurghada",
+        departure_date=date(2026, 8, 15),
+        return_date=date(2026, 8, 22),
+    )
+    store.observe(candidate, True)
+
+    message = _render(store, settings)
+    lines = message.split("\n")
+
+    assert "☀️ Typowo w sierpniu: ok. 38°C" in message
+    # Exactly between the date line and the blank line before the link.
+    date_index = next(i for i, line in enumerate(lines) if line.startswith("📅"))
+    assert lines[date_index + 1] == "☀️ Typowo w sierpniu: ok. 38°C"
+    assert lines[date_index + 2] == ""
+
+
+def test_climate_line_omitted_for_an_unrecognized_destination(
+    offer: Offer, store: Store, settings: Settings
+) -> None:
+    # The default fixture offer (GR / "Crete", in English) matches no alias,
+    # and GR has no safe country fallback -- the line must simply not appear,
+    # never a placeholder like "brak danych" or "n/a".
+    store.observe(offer, True)
+
+    message = _render(store, settings)
+
+    assert "☀️" not in message
+    assert "brak danych" not in message.lower()
+    assert "n/a" not in message.lower()
