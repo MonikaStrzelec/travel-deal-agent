@@ -275,6 +275,11 @@ AIRPORTS = {
     "Warszawa-Modlin": "WMI",
     "Katowice": "KTW",
     "Wrocław": "WRO",
+    # tests/fixtures/itaka/FUERIOC_mapping.json (real detail reconnaissance data):
+    # a Journey object `{"id": "POZ", "title": "Poznań", "beginDateTime": ...}`
+    # directly ties this title to this IATA code (itaka_details.py cross-checks
+    # `journey.id` against the departure FlightPoint's own `place.code`).
+    "Poznań": "POZ",
 }
 
 

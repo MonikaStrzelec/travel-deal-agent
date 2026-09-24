@@ -469,6 +469,7 @@ def test_negative_rating_reservation_count_is_rejected() -> None:
         (1, "Ultra All Inclusive", "AI"),
         (2, "Śniadania i obiadokolacje (HB)", "HB"),
         (3, "Śniadania (BB)", "BB"),
+        (5, "Według programu", "ZO"),
         (6, "Trzy posiłki (FB)", "FB"),
     ],
 )
@@ -488,13 +489,14 @@ def test_own_catering_code_maps_to_room_only() -> None:
     assert result.board_type == "RO"
 
 
-def test_itinerary_based_board_code_has_no_canonical_bucket() -> None:
-    # Arrange: code 5 ("ZO", wg programu) has no equivalent in boards.CANONICAL_BOARDS;
-    # left unmapped rather than guessed (RECONNAISSANCE.md sec 11.3).
+def test_itinerary_based_board_code_maps_to_zo() -> None:
+    # Arrange: code 5 ("Według programu") is a deliberate business decision to
+    # accept ZO as a normal canonical board (boards.CANONICAL_BOARDS), ranked
+    # below HB/FB/AI -- see boards.BOARD_ORDER.
     # Act
     result = normalize_offer(offer(service=5, serviceDesc="Według programu"), NOW)
     # Assert
-    assert result.board_type is None
+    assert result.board_type == "ZO"
 
 
 def test_unrecognized_service_code_is_unknown_not_guessed() -> None:

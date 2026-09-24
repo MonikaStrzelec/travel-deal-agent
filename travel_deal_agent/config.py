@@ -222,6 +222,17 @@ def validate_options(raw: AppConfig) -> None:
             < 1
         ):
             raise ValueError("HTTP limits must be positive")
+        if provider_name == "itaka" and pages is not None:
+            # One robots.txt fetch, up to `pages` listing pages, up to
+            # `detail_requests` detail confirmations, all sharing one budget
+            # (itaka.py fetch()). A budget too small to ever reach a detail
+            # request would make max_detail_requests declared but unreachable.
+            required = 1 + pages + detail_requests
+            if provider.get("max_requests", 3) < required:
+                raise ValueError(
+                    "ITAKA max_requests must cover robots.txt + max_pages listing pages + "
+                    "max_detail_requests detail requests"
+                )
     if (
         raw["scheduler"]["idle_poll_seconds"] < 1
         or not 0 <= raw["scheduler"]["max_backoff_exponent"] <= 20

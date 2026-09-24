@@ -5,7 +5,11 @@ from decimal import Decimal
 
 from .config_types import BoardPriceBand
 
-BOARD_ORDER = ("RO", "BB", "HB", "FB", "AI", "UAI")
+# ZO ("Według programu" -- Wakacje.pl's itinerary-based board, service code 5 in
+# wakacje_data.SERVICE_BOARDS) sits below HB: business decision is to accept it
+# as a normal board, but never treat it as better than HB/FB/AI (still above BB,
+# since a program-defined board is confirmed to include at least breakfast).
+BOARD_ORDER = ("RO", "BB", "ZO", "HB", "FB", "AI", "UAI")
 CANONICAL_BOARDS = frozenset(BOARD_ORDER)
 
 
@@ -27,12 +31,27 @@ _NAMES = {
         "dwa posiłki plus",
     ),
     "FB": ("fb", "full board", "3 posiłki", "trzy posiłki"),
+    "ZO": (
+        "zo",
+        "według programu",
+        "wg programu",
+        "wyżywienie według programu",
+        # ITAKA meal facet "X" (experiments/itaka_playwright/test_search.py:29,
+        # README.md:60-64: real observed meal-filter DOM, checkbox id "X").
+        "wyżywienie zgodnie z programem",
+    ),
     "AI": ("ai", "all inclusive", "all inclusive 24h"),
     "UAI": ("uai", "ultra all inclusive", "all inclusive ultra", "all inclusive ultra 24h"),
 }
 _ALIASES = {name: board for board, names in _NAMES.items() for name in names}
 # Only codes observed in each source's own listing are accepted. The title must agree.
-ITAKA_CODES = {"H": "HB", "A": "AI"}
+# H/A: tests/fixtures/itaka/*.json (real captures, e.g. CFUANGE.json/RMFTULR.json:
+# {"id": "A", "title": "All inclusive"}; FUERIOC.json: {"id": "H", "title": "2 posiłki"}).
+# V/F/U/X: experiments/itaka_playwright/test_search.py:21-29 and README.md:60-64 --
+# the site's own real meal-filter checkbox DOM ("V": "3 posiłki", "F": "Śniadania",
+# "U": "Bez wyżywienia", "X": "Wyżywienie zgodnie z programem"); no separate Ultra
+# All Inclusive checkbox is implemented there, so no code is added for UAI.
+ITAKA_CODES = {"H": "HB", "A": "AI", "V": "FB", "F": "BB", "U": "RO", "X": "ZO"}
 # Observed TUI board facet codes (source: TUI listing page facet definitions).
 TUI_CODES = {
     "GT06-AI": "AI",
@@ -56,7 +75,15 @@ def normalize_board(provider: str, title: str | None, code: str | None = None) -
         if board is None or (known is not None and board != known):
             return None
         # An unrecognized code can be accompanied by an unambiguous full meal name.
-        if known is None and normalized_text(title or "") in {"ro", "bb", "hb", "fb", "ai", "uai"}:
+        if known is None and normalized_text(title or "") in {
+            "ro",
+            "bb",
+            "hb",
+            "fb",
+            "zo",
+            "ai",
+            "uai",
+        }:
             return None
     return board
 

@@ -144,6 +144,45 @@ def test_breakfast_or_better(offer: Offer, settings: Settings, meal: str) -> Non
     )
 
 
+# --- ZO ("Wedlug programu") board: accepted, but never treated as better than HB/FB/AI ---
+
+
+def test_zo_passes_when_allowed(offer: Offer, settings: Settings) -> None:
+    # Arrange: ZO ranks above BB (boards.BOARD_ORDER), so it satisfies the
+    # below-PLN-1000 meal band (min_board BB) once explicitly whitelisted.
+    settings.filters["allowed_boards"] = ["ZO"]
+    candidate = replace(offer, board_type="ZO", price_per_person=Decimal("900"))
+    # Act / Assert
+    assert matches(candidate, settings.filters)
+
+
+def test_zo_rejected_when_not_allowed(offer: Offer, settings: Settings) -> None:
+    # Arrange: default whitelist (HB, FB, AI) does not include ZO.
+    candidate = replace(offer, board_type="ZO", price_per_person=Decimal("900"))
+    # Act / Assert
+    assert "ZO" not in settings.filters["allowed_boards"]
+    assert not matches(candidate, settings.filters)
+
+
+def test_zo_never_treated_as_better_than_half_board(offer: Offer, settings: Settings) -> None:
+    # Arrange: even when whitelisted, ZO must not satisfy the higher (PLN
+    # 1000-1500) meal band, which requires at least HB -- ZO ranks below it.
+    settings.filters["allowed_boards"] = ["ZO", "HB", "FB", "AI"]
+    candidate = replace(offer, board_type="ZO", price_per_person=Decimal("1200"))
+    # Act / Assert
+    assert not matches(candidate, settings.filters)
+    assert matches(replace(candidate, board_type="HB"), settings.filters)
+
+
+def test_ai_hb_fb_still_work_after_adding_zo(offer: Offer, settings: Settings) -> None:
+    # Arrange / Act / Assert: the existing default whitelist (config.json/
+    # test_config.json: HB, FB, AI) keeps working unchanged.
+    for meal in ("HB", "FB", "AI"):
+        assert matches(
+            replace(offer, board_type=meal, price_per_person=Decimal("1200")), settings.filters
+        )
+
+
 @pytest.mark.parametrize(
     "meal",
     [
@@ -183,9 +222,16 @@ def test_meal_order_and_airport_tie(offer: Offer, settings: Settings) -> None:
         ("All inclusive", "A", "AI"),
         ("HB", "H", "HB"),
         ("Breakfast", "A", None),
-        ("BB", "X", None),
-        ("Breakfast", "X", "BB"),
+        ("BB", "Q", None),
+        ("Breakfast", "Q", "BB"),
         (None, "A", None),
+        # V/F/U/X: real ITAKA meal-filter codes (experiments/itaka_playwright/
+        # test_search.py, README.md) -- see boards.ITAKA_CODES.
+        ("3 posiłki", "V", "FB"),
+        ("Śniadania", "F", "BB"),
+        ("Bez wyżywienia", "U", "RO"),
+        ("Wyżywienie zgodnie z programem", "X", "ZO"),
+        ("All inclusive", "V", None),
     ],
 )
 def test_itaka_code_requires_consistent_name(

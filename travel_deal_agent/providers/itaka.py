@@ -4,9 +4,12 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import date
+from urllib.error import URLError
 from urllib.parse import urlsplit
 
-from ..config_types import ProviderConfig
+from ..config_types import FilterConfig, ProviderConfig
+from ..filtering import matches_criteria
 from ..models import Offer
 from .base import Provider
 from .http import RequestBudget, Transport, UrllibTransport
@@ -28,14 +31,24 @@ class ItakaProvider(Provider):
     def __init__(
         self,
         configuration: ProviderConfig,
+        filters: FilterConfig | None = None,
         transport: Transport | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        today: Callable[[], date] = date.today,
     ) -> None:
         self.configuration = configuration
+        # Unlike rainbow/tui/wakacje.pl, `filters` is optional here: this
+        # provider's request shape (a fixed /last-minute/ URL) never depends on
+        # it. When given, it is used only to shortlist which listing candidate
+        # gets the scarce detail-confirmation request (see fetch()); omitting
+        # it (e.g. existing callers/tests built before this) simply disables
+        # that shortlist preference and preserves the original listing order.
+        self.filters = filters
         self.transport = transport or UrllibTransport()
         self.clock = clock
         self.sleep = sleep
+        self.today = today
 
     def fetch(self) -> list[Offer]:
         cfg = self.configuration
@@ -63,7 +76,21 @@ class ItakaProvider(Provider):
             url = BASE + "/last-minute/" + (f"?page={page_number}" if page_number > 1 else "")
             parts = urlsplit(url)
             robots_policy(robots, parts.path + ("?" + parts.query if parts.query else ""))
-            page = parse_page(budget.get(url).text)
+            try:
+                body = budget.get(url).text
+            except (TimeoutError, URLError) as exc:
+                # Matches wakacje.py's documented policy exactly: only a transient
+                # network error (never a policy/block status, which stays a
+                # fail-closed ValueError from RequestBudget.get()) stops further
+                # pagination while keeping every offer already parsed so far.
+                logger.warning(
+                    "ITAKA partial coverage: listing page %s skipped after a transient "
+                    "network error (%s); no retry, stopping pagination",
+                    page_number,
+                    exc,
+                )
+                break
+            page = parse_page(body)
             if page.skip != expected_skip or (
                 previous_take is not None and page.take != previous_take
             ):
@@ -77,12 +104,8 @@ class ItakaProvider(Provider):
             ):
                 raise ValueError("ITAKA repeated variants across pages")
             offers.update((offer.offer_id, offer) for offer in batch)
+            detail_candidates: list[tuple[dict[str, object], Offer, str]] = []
             for raw in page.rates:
-                if (
-                    detail_calls >= cfg.get("max_detail_requests", 1)
-                    or budget.calls >= budget.max_requests
-                ):
-                    break
                 try:
                     candidate = normalize_rate(raw, page.links)
                 except (ValueError, KeyError, TypeError):
@@ -96,10 +119,48 @@ class ItakaProvider(Provider):
                     or not detail_url.path.startswith("/wczasy/")
                 ):
                     continue
+                detail_candidates.append((raw, candidate, candidate.url))
+            filters = self.filters
+            if filters is not None:
+                # Only spend the scarce detail request on a candidate that would
+                # already pass every hard filter from listing-only data (price,
+                # airport, stars, rating band and board -- everything
+                # `matches_criteria` checks except price completeness, which
+                # only a detail request itself can establish). A candidate that
+                # is already ineligible is dropped, not merely deprioritized: it
+                # can never pass `filtering.matches()` regardless of what detail
+                # confirmation would say, so confirming it would only spend the
+                # budget without any chance of producing an alertable offer.
+                # List order (and, with it, any tie among several still-eligible
+                # candidates) is otherwise left exactly as the listing returned it.
+                today = self.today()
+                detail_candidates = [
+                    item for item in detail_candidates if matches_criteria(item[1], filters, today)
+                ]
+            for raw, candidate, url in detail_candidates:
+                if (
+                    detail_calls >= cfg.get("max_detail_requests", 1)
+                    or budget.calls >= budget.max_requests
+                ):
+                    break
+                detail_url = urlsplit(url)
                 robots_policy(
                     robots, detail_url.path + ("?" + detail_url.query if detail_url.query else "")
                 )
-                response = budget.get(candidate.url)
+                try:
+                    response = budget.get(url)
+                except (TimeoutError, URLError) as exc:
+                    # Same transient-vs-policy distinction as the listing fetch
+                    # above: a genuine network error skips just this candidate
+                    # (it keeps its listing-only, price_is_complete=False data)
+                    # rather than discarding every offer already gathered.
+                    logger.warning(
+                        "ITAKA detail request skipped for %s after a transient network "
+                        "error (%s); no retry",
+                        candidate.offer_id,
+                        exc,
+                    )
+                    continue
                 detail_calls += 1
                 try:
                     offers[candidate.offer_id] = confirm_detail(candidate, raw, response.text)

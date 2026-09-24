@@ -47,6 +47,17 @@ def test_full_message_contains_offer_details(offer: Offer, store: Store) -> None
     assert "niepotwierdzona" not in message
 
 
+def test_zo_board_renders_as_wedlug_programu(offer: Offer, store: Store) -> None:
+    # Arrange: ZO ("Wedlug programu") is a normal canonical board (boards.py);
+    # notification_content.BOARD_LABELS_PL renders it with its full Polish label.
+    candidate = replace(offer, provider="wakacje.pl", board_type="ZO")
+    store.observe(candidate, True)
+
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+
+    assert "🍽 Według programu (ZO)" in message
+
+
 def test_unverified_google_data_is_not_shown(offer: Offer, store: Store) -> None:
     candidate = replace(offer, google_rating={"rating": 4.9}, google_rating_max=5)
     store.observe(candidate, True)

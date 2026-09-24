@@ -31,7 +31,11 @@ def build_providers(
         if not config["enabled"]:
             continue
         if name == "itaka" and use_builtin_dispatch:
-            providers.append(ItakaProvider(config))
+            # Unlike rainbow/tui/wakacje.pl, filters are optional here (see
+            # ItakaProvider.__init__): they only improve which listing
+            # candidate gets the scarce detail request, so a caller that omits
+            # them (as this registry itself allows) still gets a working provider.
+            providers.append(ItakaProvider(config, filters))
             continue
         if name == "rainbow" and use_builtin_dispatch:
             from .rainbow import RainbowProvider
