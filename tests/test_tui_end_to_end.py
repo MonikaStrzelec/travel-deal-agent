@@ -203,6 +203,53 @@ def test_non_charter_confirmed_offer_never_reaches_eligibility(
     assert stored.price_is_complete is False
 
 
+def test_realtime_price_change_propagates_to_eligibility_and_notification(
+    settings: Settings, store: Store
+) -> None:
+    """Listing quoted 2440 total (1220/person); realtime reports 2450
+    (priceDifference=10) -- a nonzero priceDifference is informational only
+    (see tui_price.py), so this must still confirm, and every downstream
+    consumer (filtering.matches(), Store persistence, the rendered Telegram
+    preview) must use the realtime price, never the stale listing quote."""
+    body = json.loads(charter_realtime_body())
+    body["priceDetails"]["totalPrice"] = 2450
+    body["priceDetails"]["totalDiscountPrice"] = 2450
+    body["priceDetails"]["pricePerPerson"] = 1225
+    body["priceDetails"]["priceDifference"] = 10
+    provider = tui_provider(settings, json.dumps(body))
+    notifier = SpyNotifier()
+    scheduler = Scheduler(
+        replace(
+            settings,
+            providers={
+                name: {**cfg, "enabled": name == "tui"} for name, cfg in settings.providers.items()
+            },
+        ),
+        [FixtureTuiSource(provider)],
+        store,
+        notifier,
+        today=lambda: NOW.date(),
+    )
+
+    result = scheduler.run_once(force=True)
+
+    assert len(result) == 1
+    offer = result[0]
+    assert offer.price_is_complete is True
+    assert offer.total_price == Decimal("2510")  # 2450 + 60 confirmed TFG+TFP
+    assert offer.price_per_person == Decimal("1255")  # never the listing's 1220
+
+    stored = store.get_offer("tui", offer.offer_id)
+    assert stored is not None
+    assert stored.price_per_person == Decimal("1255")
+
+    assert len(notifier.sent) == 1
+    kind, text = notifier.sent[0]
+    assert kind == "new_offer"
+    assert "1255 zł/os." in text  # Telegram preview uses the confirmed realtime price
+    assert "1220 zł/os." not in text  # never the stale listing price
+
+
 def test_unknown_fee_field_never_reaches_eligibility(settings: Settings, store: Store) -> None:
     # Arrange: a possible new mandatory fee TUI has never disclosed before.
     body = json.loads(charter_realtime_body())

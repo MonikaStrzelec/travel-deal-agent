@@ -200,10 +200,27 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
     check is inconclusive, not available, or reports an unrecognized status --
     those are normal outcomes, not errors. Raises `ValueError` for evidence that
     actively contradicts the listing (mismatched identity, malformed payload,
-    unknown fee fields, non-zero `priceDifference`, a `priceGuaranteeFund` that
-    disagrees with the confirmed charter-package rate); the caller is expected to
-    catch this alongside the existing parsing exceptions and keep the original,
-    unconfirmed offer -- exactly like `itaka_details.confirm_detail`.
+    unknown fee fields, a `priceGuaranteeFund` that disagrees with the confirmed
+    charter-package rate); the caller is expected to catch this alongside the
+    existing parsing exceptions and keep the original, unconfirmed offer --
+    exactly like `itaka_details.confirm_detail`.
+
+    **`priceDifference` is informational, not a gate.** Confirmed by live
+    reconnaissance (2026-09-25, `data/tui-production/` -- Ramada Resort by
+    Wyndham Side, WAW -> Antalya): a real `AVAILABLE` response reported
+    `priceDifference=-2` while `priceDetails.totalPrice=2892` against a listing
+    total of `2894` (`1447`/person x 2) -- exactly `2892 - 2894 = -2`,
+    confirming this field is the realtime total's delta from the listing
+    snapshot taken earlier, not a signal that the current price is unknown or
+    unusable. `totalPrice`/`totalDiscountPrice` were equal and `factor=1.0`/
+    `discountPercentage=0` (no active promotional discount), ruling out the
+    alternative reading that this field described an in-progress discount
+    rather than a listing/realtime gap. The realtime `totalPrice`/
+    `pricePerPerson` (used below, never the stale listing price) are already
+    the authoritative, current, complete price regardless of this delta, so a
+    nonzero `priceDifference` alone never blocks confirmation -- every other
+    fail-closed check (identity, dates, board/room, party size, charter
+    structure, mandatory-fee amount) still applies unchanged and untouched.
     """
     response = parse_realtime_price(body)
 
@@ -234,8 +251,6 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
         raise ValueError(
             f"REALTIME currency {price.currency!r} disagrees with offer currency {offer.currency!r}"
         )
-    if price.priceDifference != 0:
-        raise ValueError(f"REALTIME priceDifference={price.priceDifference} is nonzero")
     if price.totalPrice <= 0 or price.pricePerPerson <= 0 or price.priceGuaranteeFund < 0:
         raise ValueError("REALTIME reported a non-positive or invalid price amount")
 
@@ -293,6 +308,12 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
         OperatorFee("TFP", TFP_PER_TRAVELLER_CHARTER_PLN * adults, price.currency),
     ]
     booking_total_price = package_price + sum((fee.amount for fee in fees), Decimal(0))
+    difference_note = (
+        f" (realtime totalPrice differs from the listing snapshot by "
+        f"{price.priceDifference} {price.currency})"
+        if price.priceDifference != 0
+        else ""
+    )
 
     return replace(
         offer,
@@ -310,6 +331,6 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
             f"tour; booking total {booking_total_price} {price.currency} = totalPrice "
             f"{package_price} + confirmed TFG+TFP {expected_fund} "
             f"({TFG_PER_TRAVELLER_CHARTER_PLN}+{TFP_PER_TRAVELLER_CHARTER_PLN} PLN/traveller x "
-            f"{adults})"
+            f"{adults}){difference_note}"
         ),
     )

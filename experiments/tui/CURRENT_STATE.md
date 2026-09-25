@@ -33,7 +33,12 @@ detail-page navigations to confirm real-time price/availability.
 - exactly one matching REALTIME response (ambiguity/timeout → unconfirmed, no crash),
 - `offerCode` matches the listed offer,
 - `offerStatus == "AVAILABLE"`,
-- currency `PLN`, `priceDifference == 0`,
+- currency `PLN` (`priceDifference` is informational only, not a gate --
+  confirmed 2026-09-25 by a real `AVAILABLE` response reporting
+  `priceDifference=-2` that exactly equalled `totalPrice - listing total`
+  ; the realtime `totalPrice`/`pricePerPerson` are already the authoritative,
+  current price regardless of this delta, so a nonzero value alone never
+  blocks confirmation),
 - `travellerCount == {adults: 2, children: 0}`,
 - hotel code / departure airport / dates / duration all agree with the listing,
 - no unrecognized field inside `priceDetails` (possible new fee → reject),
