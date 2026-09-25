@@ -15,7 +15,6 @@ from travel_deal_agent.providers.wakacje import (
     CONFIRMED_SEARCH_QUERY,
     LISTING_PATH,
     WakacjeProvider,
-    robots_policy,
 )
 
 CONFIG: ProviderConfig = {"enabled": True, "interval_seconds": 3600}
@@ -168,9 +167,7 @@ def test_page_one_and_page_two_use_the_confirmed_shapes_exactly(settings: Settin
         [response(ALLOW_ROBOTS), combo_page_response(), combo_page_response()]
     )
     provider = WakacjeProvider(cfg, settings.filters, transport, sleep=lambda _: None)
-    # Act
     provider.fetch()
-    # Assert
     assert transport.urls == [
         BASE + "/robots.txt",
         BASE + f"{LISTING_PATH}?{CONFIRMED_SEARCH_QUERY}&src=fromFilters",
@@ -178,11 +175,31 @@ def test_page_one_and_page_two_use_the_confirmed_shapes_exactly(settings: Settin
     ]
 
 
+def test_fetch_carries_the_real_variant_href_into_the_offer(settings: Settings) -> None:
+    # Arrange: the fetched page carries the real `data-test-offer-id` anchor for
+    # offer 1 (KTW) only; its query string pins the exact stay variant.
+    variant_href = (
+        f"{BASE}/oferty/turcja/wybrzeze-egejskie/didim/laur-experience-elegance-1.html"
+        "?od-2026-10-13,7-dni,all-inclusive,z-katowic"
+    )
+    anchor = f'<a data-test-offer-id="1" href="{variant_href}">Laur Experience</a>'
+    page = response(combo_page_response().text + anchor)
+    cfg: ProviderConfig = {**settings.providers["wakacje.pl"], "max_pages": 1, "max_requests": 2}
+    transport = FakeTransport([response(ALLOW_ROBOTS), page])
+    provider = WakacjeProvider(cfg, settings.filters, transport, sleep=lambda _: None)
+    by_airport = {o.departure_airport: o for o in provider.fetch()}
+    # Assert: the exact href reaches the Offer untouched; the card without an
+    # anchor keeps the reconstructed URL.
+    assert by_airport["KTW"].url == variant_href
+    assert by_airport["LCJ"].url == (
+        f"{BASE}/oferty/turcja/wybrzeze-egejskie/didim/laur-experience-elegance-2.html"
+    )
+
+
 # --- listing only: never a detail page, never an API endpoint -----------------------
 
 
 def test_never_requests_a_detail_page(settings: Settings) -> None:
-    # Arrange
     max_pages = settings.providers["wakacje.pl"].get("max_pages", 2)
     assert max_pages is not None
     transport = FakeTransport(
@@ -191,14 +208,11 @@ def test_never_requests_a_detail_page(settings: Settings) -> None:
     provider = WakacjeProvider(
         settings.providers["wakacje.pl"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     provider.fetch()
-    # Assert
     assert all("/oferty/" not in url for url in transport.urls)
 
 
 def test_never_calls_an_api_or_ajax_endpoint_directly(settings: Settings) -> None:
-    # Arrange
     max_pages = settings.providers["wakacje.pl"].get("max_pages", 2)
     assert max_pages is not None
     transport = FakeTransport(
@@ -207,32 +221,8 @@ def test_never_calls_an_api_or_ajax_endpoint_directly(settings: Settings) -> Non
     provider = WakacjeProvider(
         settings.providers["wakacje.pl"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     provider.fetch()
-    # Assert
     assert all("/ajax/" not in url and not url.endswith(".json") for url in transport.urls)
-
-
-def test_only_the_confirmed_query_and_pagination_shape_are_ever_requested(
-    settings: Settings,
-) -> None:
-    # Arrange: every request must be either the bare confirmed query (page 1,
-    # with its confirmed tracking suffix) or "str-<n>,<the same query>" -- never
-    # anything guessed or added beyond what was live-confirmed.
-    max_pages = settings.providers["wakacje.pl"].get("max_pages", 2)
-    assert max_pages is not None
-    transport = FakeTransport(
-        [response(ALLOW_ROBOTS), *[combo_page_response() for _ in range(max_pages)]]
-    )
-    provider = WakacjeProvider(
-        settings.providers["wakacje.pl"], settings.filters, transport, sleep=lambda _: None
-    )
-    # Act
-    provider.fetch()
-    # Assert
-    listing_urls = [u for u in transport.urls if u != BASE + "/robots.txt"]
-    for page, url in enumerate(listing_urls, start=1):
-        assert url == BASE + page_n_path(page)
 
 
 def test_confirmed_search_query_includes_cheapest_sort_and_all_four_airports() -> None:
@@ -249,7 +239,6 @@ def test_confirmed_search_query_includes_cheapest_sort_and_all_four_airports() -
 
 
 def test_paginates_up_to_max_pages(settings: Settings) -> None:
-    # Arrange
     max_pages = settings.providers["wakacje.pl"].get("max_pages", 2)
     assert max_pages is not None
     assert max_pages == 3  # pins the production config.json value this test relies on
@@ -259,9 +248,7 @@ def test_paginates_up_to_max_pages(settings: Settings) -> None:
     provider = WakacjeProvider(
         settings.providers["wakacje.pl"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     provider.fetch()
-    # Assert
     assert transport.urls == [
         BASE + "/robots.txt",
         BASE + f"{LISTING_PATH}?{CONFIRMED_SEARCH_QUERY}&src=fromFilters",
@@ -271,11 +258,9 @@ def test_paginates_up_to_max_pages(settings: Settings) -> None:
 
 
 def test_max_pages_one_means_a_single_page(settings: Settings) -> None:
-    # Arrange
     cfg: ProviderConfig = {**settings.providers["wakacje.pl"], "max_pages": 1, "max_requests": 2}
     transport = FakeTransport([response(ALLOW_ROBOTS), combo_page_response()])
     provider = WakacjeProvider(cfg, settings.filters, transport, sleep=lambda _: None)
-    # Act
     provider.fetch()
     # Assert: no str-N page ever requested.
     assert transport.urls == [
@@ -291,7 +276,6 @@ def test_pagination_stops_when_the_request_budget_is_reached(settings: Settings)
     cfg: ProviderConfig = {**settings.providers["wakacje.pl"], "max_pages": 3, "max_requests": 2}
     transport = FakeTransport([response(ALLOW_ROBOTS), combo_page_response()])
     provider = WakacjeProvider(cfg, settings.filters, transport, sleep=lambda _: None)
-    # Act
     offers = provider.fetch()
     # Assert: only page 1 is reached; the loop breaks before requesting page 2.
     assert len(offers) == 2
@@ -323,7 +307,6 @@ def test_full_confirmed_scan_fits_within_the_configured_cycle_seconds(settings: 
         clock=lambda: now[0],
         sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
     )
-    # Act
     offers = provider.fetch()
     # Assert: all 4 requests complete; none are lost to a cycle-deadline abort.
     assert len(transport.urls) == 4
@@ -344,7 +327,6 @@ def test_transient_network_error_stops_pagination_but_keeps_earlier_pages(
     cfg: ProviderConfig = {**settings.providers["wakacje.pl"], "max_pages": 3, "max_requests": 4}
     transport = FakeTransport([response(ALLOW_ROBOTS), combo_page_response(), transient_error])
     provider = WakacjeProvider(cfg, settings.filters, transport, sleep=lambda _: None)
-    # Act
     offers = provider.fetch()
     # Assert: no exception, page 3 never requested, page 1's offers survive.
     assert transport.urls == [
@@ -358,13 +340,11 @@ def test_transient_network_error_stops_pagination_but_keeps_earlier_pages(
 def test_transient_network_error_warning_names_the_page(
     settings: Settings, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Arrange
     cfg: ProviderConfig = {**settings.providers["wakacje.pl"], "max_pages": 3, "max_requests": 4}
     transport = FakeTransport(
         [response(ALLOW_ROBOTS), combo_page_response(), TimeoutError("synthetic timeout")]
     )
     provider = WakacjeProvider(cfg, settings.filters, transport, sleep=lambda _: None)
-    # Act
     provider.fetch()
     # Assert: enough context to know provider/page/cause, no traceback dump.
     assert "Wakacje.pl" in caplog.text
@@ -448,9 +428,7 @@ def test_module_never_imports_playwright() -> None:
 
 
 def test_disallowed_listing_path_is_never_fetched(settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response(f"User-agent: *\nDisallow: {LISTING_PATH}")])
-    # Act / Assert
     with pytest.raises(ValueError, match="robots"):
         WakacjeProvider(
             CONFIG,
@@ -466,9 +444,7 @@ def test_disallowed_listing_path_is_never_fetched(settings: Settings) -> None:
     ["<html>CAPTCHA</html>", "User-agent: Other\nDisallow: /"],
 )
 def test_robots_fail_closed(robots: str, settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response(robots)])
-    # Act / Assert
     with pytest.raises(ValueError):
         WakacjeProvider(
             CONFIG,
@@ -481,9 +457,7 @@ def test_robots_fail_closed(robots: str, settings: Settings) -> None:
 
 @pytest.mark.parametrize("status", [301, 403, 429, 503])
 def test_no_retry_or_redirect_on_robots_http_failure(status: int, settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("", status)])
-    # Act / Assert
     with pytest.raises(ValueError, match="HTTP"):
         WakacjeProvider(
             CONFIG,
@@ -507,29 +481,17 @@ def test_crawl_delay_is_honored_before_the_first_page_fetch(settings: Settings) 
         clock=lambda: 0.0,
         sleep=waits.append,
     )
-    # Act
     provider.fetch()
     # Assert: the first request (robots.txt) never waits; the second honors the
     # confirmed Crawl-delay of 3.
     assert waits == [0, 3]
 
 
-def test_robots_policy_is_a_conservative_union() -> None:
-    # Arrange / Act / Assert
-    assert robots_policy("User-agent: *\nDisallow: /api/\nCrawl-delay: 5", "/lastminute/") == 5
-    with pytest.raises(ValueError, match="forbidden"):
-        robots_policy("User-agent: *\nDisallow: /lastminute/", "/lastminute/")
-    with pytest.raises(ValueError, match="robots.txt"):
-        robots_policy("<html>not robots</html>", "/lastminute/")
-
-
 # --- schema-change / malformed body --------------------------------------------------
 
 
 def test_schema_change_in_the_listing_body_fails_closed(settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response(ALLOW_ROBOTS), response("<html>not json</html>")])
-    # Act / Assert
     with pytest.raises(ValueError):
         WakacjeProvider(
             CONFIG,
@@ -551,24 +513,19 @@ def test_registry_builds_a_disabled_wakacje_provider_without_network_access(
     config: dict[str, ProviderConfig] = {"wakacje.pl": disabled}
     # Act: construction performs no network access regardless.
     sources = build_providers(config, filters=settings.filters)
-    # Assert
     assert sources == []
 
 
 def test_registry_builds_an_enabled_wakacje_provider(settings: Settings) -> None:
-    # Arrange
     enabled: ProviderConfig = {**settings.providers["wakacje.pl"], "enabled": True}
     # Act: construction validates filters but performs no network access.
     sources = build_providers({"wakacje.pl": enabled}, filters=settings.filters)
-    # Assert
     assert [s.name for s in sources] == ["wakacje.pl"]
     assert isinstance(sources[0], WakacjeProvider)
 
 
 def test_registry_requires_shared_filters() -> None:
-    # Arrange
     enabled: ProviderConfig = {**CONFIG, "enabled": True}
-    # Act / Assert
     with pytest.raises(ValueError, match="shared business filters"):
         build_providers({"wakacje.pl": enabled})
 
@@ -581,8 +538,6 @@ def test_production_request_budget_is_unchanged() -> None:
     production = json.loads(
         (Path(__file__).resolve().parent.parent / "config.json").read_text(encoding="utf-8")
     )
-    # Act
     cfg = production["providers"]["wakacje.pl"]
-    # Assert
     assert (cfg["max_pages"], cfg["max_requests"]) == (3, 4)
     assert cfg["max_requests"] == 1 + cfg["max_pages"]

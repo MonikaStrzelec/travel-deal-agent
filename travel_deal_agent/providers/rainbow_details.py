@@ -202,6 +202,38 @@ def _party_room(
     return RainbowRoom(type_id, config_id, _text(names.get(str(type_id))), 1)
 
 
+def _selected_board(block: dict[str, object], params: dict[str, list[str]]) -> tuple[str, str]:
+    """Return (canonical board, Rainbow board code) for the two observed board options."""
+    board = _active(block.get("Wyzywienia"))
+    board_code = _text(board.get("Wartosc"))
+    boards = {"2-posilki": ("HB", "2 posiłki"), "all-inclusive": ("AI", "All inclusive")}
+    require(board_code in boards, "Unsupported selected board")
+    normalized_board, label = boards[board_code]
+    _equal(board.get("Nazwa"), label, "board label")
+    _equal(_param(params, "wybraneWyzywienie"), board_code, "booking board")
+    return normalized_board, board_code
+
+
+def _selected_prices(
+    selected: dict[str, object], term: dict[str, object]
+) -> tuple[Decimal, Decimal]:
+    """Return (per-person, total) once calculator, date and per-participant prices agree."""
+    price, total = _money(selected.get("CenaAvg")), _money(selected.get("CenaSum"))
+    require(price * 2 == total, "Conflicting calculator prices; rounded averages unsupported")
+    _equal(_money(term.get("CenaAvg")), price, "selected date price")
+    _equal(_money(term.get("CenaSum")), total, "selected date total")
+    participant_prices = sequence(selected.get("CenyZaOsoby"))
+    require(len(participant_prices) == 2, "Conflicting participant prices")
+    amounts: list[Decimal] = []
+    for index, item in enumerate(participant_prices):
+        quote = mapping(item)
+        _equal(quote.get("NrPokoju"), 0, "price room")
+        _equal(quote.get("NrOsoby"), index, "price participant")
+        amounts.append(_money(quote.get("Cena")))
+    require(sum(amounts, Decimal(0)) == total, "Conflicting participant total")
+    return price, total
+
+
 def parse_selected_variant(
     html: str,
     *,
@@ -279,13 +311,7 @@ def parse_selected_variant(
         _param(params, "hotelParamsV2"), f"1_{hotel_id}_{departure}_{nights}", "hotel parameters V2"
     )
     block = _one(calc.get("Bloki"))
-    board = _active(block.get("Wyzywienia"))
-    board_code = _text(board.get("Wartosc"))
-    boards = {"2-posilki": ("HB", "2 posiłki"), "all-inclusive": ("AI", "All inclusive")}
-    require(board_code in boards, "Unsupported selected board")
-    normalized_board, label = boards[board_code]
-    _equal(board.get("Nazwa"), label, "board label")
-    _equal(_param(params, "wybraneWyzywienie"), board_code, "booking board")
+    normalized_board, board_code = _selected_board(block, params)
     room = _party_room(hotel, selected, block, params, departure)
     connection = _active(calc.get("Polaczenia"))
     _equal(connection.get("UnikalnyKluczOferty"), expected_opaque_key, "connection key")
@@ -310,19 +336,7 @@ def parse_selected_variant(
     _equal(outbound.arrival_date, departure, "arrival date")
     _equal(inbound.departure_date, end, "inbound date")
     _equal(inbound.arrival_date, end, "return date")
-    price, total = _money(selected.get("CenaAvg")), _money(selected.get("CenaSum"))
-    require(price * 2 == total, "Conflicting calculator prices; rounded averages unsupported")
-    _equal(_money(term.get("CenaAvg")), price, "selected date price")
-    _equal(_money(term.get("CenaSum")), total, "selected date total")
-    participant_prices = sequence(selected.get("CenyZaOsoby"))
-    require(len(participant_prices) == 2, "Conflicting participant prices")
-    amounts: list[Decimal] = []
-    for index, item in enumerate(participant_prices):
-        quote = mapping(item)
-        _equal(quote.get("NrPokoju"), 0, "price room")
-        _equal(quote.get("NrOsoby"), index, "price participant")
-        amounts.append(_money(quote.get("Cena")))
-    require(sum(amounts, Decimal(0)) == total, "Conflicting participant total")
+    price, total = _selected_prices(selected, term)
     return RainbowSelectedVariant(
         expected_product_key,
         expected_opaque_key,

@@ -53,23 +53,14 @@ def test_value_fails_safe_instead_of_dividing_by_zero(
 # --- HOTEL QUALITY -------------------------------------------------------------
 
 
-def test_hotel_quality_wakacje_scale_strong(offer: Offer) -> None:
-    candidate = replace(offer, provider="wakacje.pl", rating=8.6, hotel_stars=4)
+@pytest.mark.parametrize("rating,expected", [(8.6, "strong"), (8.0, "normal")])
+def test_hotel_quality_wakacje_scale(offer: Offer, rating: float, expected: str) -> None:
+    candidate = replace(offer, provider="wakacje.pl", rating=rating, hotel_stars=4)
     assert (
         classify_hotel_quality(
             candidate, {"wakacje.pl": WAKACJE_RULE}, DEFAULT_ATTRACTIVENESS_CONFIG
         )
-        == "strong"
-    )
-
-
-def test_hotel_quality_wakacje_scale_normal(offer: Offer) -> None:
-    candidate = replace(offer, provider="wakacje.pl", rating=8.0, hotel_stars=4)
-    assert (
-        classify_hotel_quality(
-            candidate, {"wakacje.pl": WAKACJE_RULE}, DEFAULT_ATTRACTIVENESS_CONFIG
-        )
-        == "normal"
+        == expected
     )
 
 

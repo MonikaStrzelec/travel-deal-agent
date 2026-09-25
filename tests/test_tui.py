@@ -10,9 +10,10 @@ from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import ProviderConfig
 from travel_deal_agent.providers.http import Response
 from travel_deal_agent.providers.registry import build_providers
-from travel_deal_agent.providers.tui import BASE, TuiProvider, robots_policy
+from travel_deal_agent.providers.tui import BASE, TuiProvider
 from travel_deal_agent.providers.tui_errors import TuiBlocked, TuiStructureError, TuiTimeout
 from travel_deal_agent.providers.tui_query import build_search_path
+from tui_support import NOT_AVAILABLE_BODY
 
 NOW = datetime(2026, 9, 22, tzinfo=timezone.utc)
 CONFIG: ProviderConfig = {"enabled": True, "interval_seconds": 3600}
@@ -72,10 +73,6 @@ TWO_OFFER_BODY = json.dumps(
         ]
     }
 )
-# offerStatus alone (no offerCode/priceDetails) is exactly what a real NOT_AVAILABLE
-# response looks like (confirmed live, 2026-09-22) -- the safe, non-crashing default
-# for tests that don't care about detail confirmation itself.
-NOT_AVAILABLE_BODY = json.dumps({"offerStatus": "NOT_AVAILABLE", "alternativeOffers": []})
 
 
 class FakeTransport:
@@ -125,12 +122,9 @@ def provider(
 
 
 def test_fetch_reads_robots_then_captures_and_returns_offers(settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("User-agent: *\nAllow: /\nDisallow: /api/")])
     capture = FakeCapture()
-    # Act
     offers = provider(settings, transport, capture).fetch()
-    # Assert
     assert len(offers) == 1
     assert offers[0].provider == "tui"
     assert offers[0].found_at == NOW and offers[0].last_seen == NOW
@@ -145,7 +139,6 @@ def test_disallowed_search_path_is_never_captured(settings: Settings) -> None:
         [response("User-agent: *\nDisallow: /wypoczynek/wyniki-wyszukiwania-samolot")]
     )
     capture = FakeCapture()
-    # Act / Assert
     with pytest.raises(ValueError, match="robots"):
         provider(settings, transport, capture).fetch()
     assert transport.urls == [BASE + "/robots.txt"]
@@ -157,10 +150,8 @@ def test_disallowed_search_path_is_never_captured(settings: Settings) -> None:
     ["<html>CAPTCHA</html>", "User-agent: Other\nDisallow: /"],
 )
 def test_robots_fail_closed(robots: str, settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response(robots)])
     capture = FakeCapture()
-    # Act / Assert
     with pytest.raises(ValueError):
         provider(settings, transport, capture).fetch()
     assert len(transport.urls) == 1
@@ -169,10 +160,8 @@ def test_robots_fail_closed(robots: str, settings: Settings) -> None:
 
 @pytest.mark.parametrize("status", [301, 403, 429, 503])
 def test_no_retry_or_redirect_on_robots_http_failure(status: int, settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("", status)])
     capture = FakeCapture()
-    # Act / Assert
     with pytest.raises(ValueError, match="HTTP"):
         provider(settings, transport, capture).fetch()
     assert len(transport.urls) == 1
@@ -185,16 +174,13 @@ def test_api_path_is_never_requested_directly(settings: Settings) -> None:
     # confirmed-allowed /wypoczynek/... URL through the (here, fake) browser capture.
     transport = FakeTransport([response("User-agent: *\nAllow: /\nDisallow: /api/")])
     capture = FakeCapture()
-    # Act
     provider(settings, transport, capture).fetch()
-    # Assert
     assert all("/api/" not in url for url in transport.urls)
     assert all("/api/" not in url for url, _ in capture.calls)
     assert all(url.startswith(BASE + "/wypoczynek/") for url, _ in capture.calls)
 
 
 def test_crawl_delay_is_honored_before_capture(settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/\nCrawl-delay: 3")])
     capture = FakeCapture()
     capture_price = FakeCapture(body=NOT_AVAILABLE_BODY)
@@ -208,37 +194,30 @@ def test_crawl_delay_is_honored_before_capture(settings: Settings) -> None:
         sleep=waits.append,
         wall_clock=lambda: NOW,
     )
-    # Act
     p.fetch()
     # Assert: once before the search-results navigation, once before the one
     # detail-confirmation navigation -- the site-wide crawl-delay applies to both.
     assert waits == [3, 3]
 
 
-def test_capture_failure_propagates(settings: Settings) -> None:
-    # Arrange
-    transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
-    capture = FakeCapture(body=TuiBlocked("TUI requires human verification"))
-    # Act / Assert
-    with pytest.raises(TuiBlocked):
-        provider(settings, transport, capture).fetch()
-
-
-@pytest.mark.parametrize("error", [TuiTimeout("timed out"), TuiStructureError("ambiguous")])
-def test_other_capture_failures_propagate_distinctly(error: Exception, settings: Settings) -> None:
-    # Arrange
+@pytest.mark.parametrize(
+    "error",
+    [
+        TuiBlocked("TUI requires human verification"),
+        TuiTimeout("timed out"),
+        TuiStructureError("ambiguous"),
+    ],
+)
+def test_capture_failures_propagate_distinctly(error: Exception, settings: Settings) -> None:
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture(body=error)
-    # Act / Assert
     with pytest.raises(type(error)):
         provider(settings, transport, capture).fetch()
 
 
 def test_schema_change_in_the_captured_body_fails_closed(settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture(body="<html>not json</html>")
-    # Act / Assert
     with pytest.raises(ValueError):
         provider(settings, transport, capture).fetch()
 
@@ -251,7 +230,6 @@ def test_detail_confirmation_defaults_to_one_candidate(settings: Settings) -> No
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture(body=TWO_OFFER_BODY)
     capture_price = FakeCapture(body=NOT_AVAILABLE_BODY)
-    # Act
     offers = provider(settings, transport, capture, capture_price).fetch()
     # Assert: only the first (cheapest, listing-order) offer gets a detail request.
     assert len(offers) == 2
@@ -260,13 +238,10 @@ def test_detail_confirmation_defaults_to_one_candidate(settings: Settings) -> No
 
 
 def test_max_detail_requests_zero_confirms_nothing(settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture(body=TWO_OFFER_BODY)
     capture_price = FakeCapture(body=NOT_AVAILABLE_BODY)
-    # Act
     offers = provider(settings, transport, capture, capture_price, max_detail_requests=0).fetch()
-    # Assert
     assert len(offers) == 2
     assert capture_price.calls == []
 
@@ -276,7 +251,6 @@ def test_detail_confirmation_failure_does_not_crash_the_cycle(settings: Settings
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture()
     capture_price = FakeCapture(body=TuiTimeout("no matching response"))
-    # Act
     offers = provider(settings, transport, capture, capture_price).fetch()
     # Assert: the cycle completes; the listed offer is kept, unconfirmed.
     assert len(offers) == 1
@@ -287,13 +261,10 @@ def test_detail_confirmation_failure_does_not_crash_the_cycle(settings: Settings
 def test_detail_confirmation_malformed_response_does_not_crash_the_cycle(
     settings: Settings,
 ) -> None:
-    # Arrange
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture()
     capture_price = FakeCapture(body="<html>not json</html>")
-    # Act
     offers = provider(settings, transport, capture, capture_price).fetch()
-    # Assert
     assert len(offers) == 1
     assert offers[0].price_is_complete is False
     assert offers[0].price_verification_reason is not None
@@ -367,9 +338,7 @@ def test_detail_confirmation_stays_unconfirmed_for_a_non_charter_offer(
     transport = FakeTransport([response("User-agent: *\nDisallow: /api/")])
     capture = FakeCapture()
     capture_price = FakeCapture(body=json.dumps(body))
-    # Act
     offers = provider(settings, transport, capture, capture_price).fetch()
-    # Assert
     assert len(offers) == 1
     assert offers[0].price_is_complete is False
     assert "CHARTER_PACKAGE_NOT_CONFIRMED" in (offers[0].price_verification_reason or "")
@@ -395,26 +364,13 @@ def test_registry_builds_a_disabled_tui_provider_without_network_access(
     # behavior, matching the ITAKA/Rainbow pattern.
     disabled: ProviderConfig = {**settings.providers["tui"], "enabled": False}
     config: dict[str, ProviderConfig] = {"tui": disabled}
-    # Act
     sources = build_providers(config, filters=settings.filters)
-    # Assert
     assert sources == []
 
 
 def test_registry_builds_an_enabled_tui_provider(settings: Settings) -> None:
-    # Arrange
     enabled: ProviderConfig = {**settings.providers["tui"], "enabled": True}
     # Act: construction validates filters but performs no network/browser access.
     sources = build_providers({"tui": enabled}, filters=settings.filters)
-    # Assert
     assert [s.name for s in sources] == ["tui"]
     assert isinstance(sources[0], TuiProvider)
-
-
-def test_robots_policy_is_a_conservative_union() -> None:
-    # Arrange / Act / Assert
-    assert robots_policy("User-agent: *\nDisallow: /api/\nCrawl-delay: 5", "/wypoczynek/x") == 5
-    with pytest.raises(ValueError, match="forbidden"):
-        robots_policy("User-agent: *\nDisallow: /wypoczynek/", "/wypoczynek/x")
-    with pytest.raises(ValueError, match="robots.txt"):
-        robots_policy("<html>not robots</html>", "/wypoczynek/x")

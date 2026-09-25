@@ -59,19 +59,15 @@ def fake_response(status: int = 200, url: str = URL, body: str = "{}") -> Simple
 def test_matches_path_matches_by_host_and_exact_path_only(
     url: str, path: str, expected: bool
 ) -> None:
-    # Arrange / Act / Assert.
     assert _matches_path(url, path) is expected
 
 
 def test_select_response_returns_the_one_match() -> None:
-    # Arrange.
     response = cast(Response, fake_response(200))
-    # Act / Assert.
     assert _select_response([response], "search/offers") is response
 
 
 def test_select_response_raises_timeout_when_none_observed() -> None:
-    # Arrange / Act / Assert.
     with pytest.raises(TuiTimeout):
         _select_response([], "search/offers")
 
@@ -79,20 +75,17 @@ def test_select_response_raises_timeout_when_none_observed() -> None:
 def test_select_response_raises_on_multiple_matches() -> None:
     # Arrange: never guess which of several responses reflects the current search.
     responses = [fake_response(200), fake_response(200)]
-    # Act / Assert.
     with pytest.raises(TuiStructureError, match="Ambiguous"):
         _select_response(cast(list[Response], responses), "search/offers")
 
 
 @pytest.mark.parametrize("status", [403, 429])
 def test_select_response_raises_blocked_on_403_429(status: int) -> None:
-    # Arrange / Act / Assert.
     with pytest.raises(TuiBlocked):
         _select_response([cast(Response, fake_response(status))], "search/offers")
 
 
 def test_select_response_raises_generic_error_on_other_bad_status() -> None:
-    # Arrange / Act / Assert.
     with pytest.raises(TuiError):
         _select_response([cast(Response, fake_response(500))], "search/offers")
 
@@ -176,26 +169,22 @@ def test_capture_ignores_unrelated_responses(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_capture_raises_on_navigation_block(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Arrange.
     page = page_mock()
     page.goto.return_value = MagicMock(status=403)
     cm, browser = playwright_context_manager(page)
     monkeypatch.setattr("travel_deal_agent.providers.tui_browser.sync_playwright", lambda: cm)
 
-    # Act / Assert.
     with pytest.raises(TuiBlocked):
         capture_search_offers(URL, timeout_seconds=5)
     browser.close.assert_called_once()
 
 
 def test_capture_raises_on_blocked_page_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Arrange.
     page = page_mock()
     page.locator.return_value.inner_text.return_value = "Please verify you are human"
     cm, browser = playwright_context_manager(page)
     monkeypatch.setattr("travel_deal_agent.providers.tui_browser.sync_playwright", lambda: cm)
 
-    # Act / Assert.
     with pytest.raises(TuiBlocked):
         capture_search_offers(URL, timeout_seconds=5)
     browser.close.assert_called_once()
@@ -211,7 +200,6 @@ def test_capture_times_out_when_no_matching_response_arrives(
     monkeypatch.setattr("travel_deal_agent.providers.tui_browser.sync_playwright", lambda: cm)
     ticks = iter([0.0, 100.0, 100.0])
 
-    # Act / Assert.
     with pytest.raises(TuiTimeout):
         capture_search_offers(URL, timeout_seconds=5, clock=lambda: next(ticks))
     browser.close.assert_called_once()
@@ -354,13 +342,11 @@ def test_capture_offer_price_never_matches_the_search_offers_response(
 def test_capture_offer_price_times_out_when_no_matching_response_arrives(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Arrange.
     page = page_mock()
     cm, browser = playwright_context_manager(page)
     monkeypatch.setattr("travel_deal_agent.providers.tui_browser.sync_playwright", lambda: cm)
     ticks = iter([0.0, 100.0, 100.0])
 
-    # Act / Assert.
     with pytest.raises(TuiTimeout):
         capture_offer_price(DETAIL_URL, timeout_seconds=5, clock=lambda: next(ticks))
     browser.close.assert_called_once()

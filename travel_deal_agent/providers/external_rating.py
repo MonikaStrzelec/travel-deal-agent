@@ -9,7 +9,6 @@ from ..boards import normalized_text
 from ..config_types import ExternalConfig
 from ..models import ExternalHotelRating, Offer
 
-HotelRating = ExternalHotelRating
 logger = logging.getLogger(__name__)
 
 

@@ -74,7 +74,6 @@ def test_max_requests_limit_raises_without_calling_transport_again() -> None:
     transport = RecordingTransport([ok("a")], clock)
     budget = RequestBudget(transport, 1, 15, 60, 0, clock, lambda _: None)
 
-    # Act.
     budget.get("https://example.invalid/1")
 
     # Assert: the second call is rejected before touching the transport.
@@ -90,7 +89,6 @@ def test_request_gap_delays_the_next_call_by_exactly_the_configured_gap() -> Non
     sleeps: list[float] = []
     budget = RequestBudget(transport, 5, 15, 60, 5, clock, recording_sleep(sleeps, clock))
 
-    # Act.
     budget.get("https://example.invalid/1")
     budget.get("https://example.invalid/2")
 
@@ -108,7 +106,6 @@ def test_request_gap_shrinks_by_time_already_spent_since_the_last_call() -> None
     sleeps: list[float] = []
     budget = RequestBudget(transport, 5, 15, 60, 5, clock, recording_sleep(sleeps, clock))
 
-    # Act.
     budget.get("https://example.invalid/1")
     clock.now += 2.0
     budget.get("https://example.invalid/2")
@@ -118,17 +115,14 @@ def test_request_gap_shrinks_by_time_already_spent_since_the_last_call() -> None
 
 
 def test_aggregate_deadline_is_checked_before_sleeping_further_requests() -> None:
-    # Arrange: a 9s cycle with a 5s gap allows exactly two requests (matches
-    # the existing indirect coverage in test_itaka.py).
+    # Arrange: a 9s cycle with a 5s gap allows exactly two requests.
     clock = FakeClock()
     transport = RecordingTransport([ok("a"), ok("b")], clock)
     budget = RequestBudget(transport, 3, 15, 9, 5, clock, recording_sleep([], clock))
 
-    # Act.
     budget.get("https://example.invalid/1")
     budget.get("https://example.invalid/2")
 
-    # Assert.
     assert clock.now == 5
     with pytest.raises(ValueError, match="deadline"):
         budget.get("https://example.invalid/3")
@@ -144,7 +138,6 @@ def test_request_exactly_at_the_deadline_boundary_is_rejected() -> None:
     budget = RequestBudget(transport, 5, 15, 5, 5, clock, recording_sleep([], clock))
     budget.get("https://example.invalid/1")
 
-    # Act / Assert.
     with pytest.raises(ValueError, match="deadline"):
         budget.get("https://example.invalid/2")
     assert len(transport.calls) == 1
@@ -158,10 +151,8 @@ def test_request_one_tick_before_the_deadline_boundary_succeeds() -> None:
     budget = RequestBudget(transport, 5, 15, 5, 4, clock, recording_sleep([], clock))
     budget.get("https://example.invalid/1")
 
-    # Act.
     response = budget.get("https://example.invalid/2")
 
-    # Assert.
     assert response.text == "b"
     assert clock.now == 4
 
@@ -174,7 +165,6 @@ def test_deadline_exceeded_while_the_request_itself_is_in_flight() -> None:
     transport = RecordingTransport([ok("a")], clock, cost=10.0)
     budget = RequestBudget(transport, 5, 15, 10, 0, clock, recording_sleep([], clock))
 
-    # Act / Assert.
     with pytest.raises(ValueError, match="deadline"):
         budget.get("https://example.invalid/1")
     # The transport call still happened -- the deadline is only caught after.

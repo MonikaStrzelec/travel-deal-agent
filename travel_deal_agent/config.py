@@ -120,7 +120,18 @@ def positive_decimal(value: str) -> Decimal:
 
 
 def validate_options(raw: AppConfig) -> None:
-    """Validate ranking, scheduling and external verification settings."""
+    """Validate everything outside `filters`, one configuration group at a time."""
+    _validate_price_history(raw)
+    _validate_ranking(raw["ranking"])
+    _validate_external_verification(raw["external_verification"])
+    for provider_name, provider in raw["providers"].items():
+        _validate_provider_limits(provider_name, provider)
+    _validate_scheduler(raw["scheduler"])
+    validate_active_hours(raw["active_hours"])
+    validate_attractiveness_config(raw["attractiveness"])
+
+
+def _validate_price_history(raw: AppConfig) -> None:
     if type(raw["alert_rearm_hours"]) is not int or raw["alert_rearm_hours"] <= 0:
         raise ValueError("alert_rearm_hours must be a positive whole number of hours")
     drop_amount = Decimal(raw["price_drop_min_amount"])
@@ -129,7 +140,9 @@ def validate_options(raw: AppConfig) -> None:
     drop_percent = raw["price_drop_min_percent"]
     if not math.isfinite(drop_percent) or not 0 <= drop_percent <= 1:
         raise ValueError("price_drop_min_percent must be between 0 and 1")
-    ranking = raw["ranking"]
+
+
+def _validate_ranking(ranking: RankingConfig) -> None:
     expected = {
         "price",
         "airport",
@@ -167,7 +180,9 @@ def validate_options(raw: AppConfig) -> None:
             or set(flattened) != set(ranking["airport_priority"])
         ):
             raise ValueError("Airport groups must partition airport_priority")
-    external = raw["external_verification"]
+
+
+def _validate_external_verification(external: ExternalConfig) -> None:
     validate_rating_rules(
         {"google": {"enabled": False, "scale": external["scale"], "price_bands": []}}
     )
@@ -186,71 +201,66 @@ def validate_options(raw: AppConfig) -> None:
             raise ValueError("Invalid external ranking weight")
     if external["max_candidates"] < 0:
         raise ValueError("Invalid external candidate limit")
-    for provider_name, provider in raw["providers"].items():
-        if provider["interval_seconds"] < 1:
-            raise ValueError("Provider intervals must be positive")
-        has_min = "interval_min_seconds" in provider
-        has_max = "interval_max_seconds" in provider
-        if has_min != has_max:
-            raise ValueError("interval_min_seconds and interval_max_seconds must be set together")
-        if has_min and not (
-            0 < provider["interval_min_seconds"] <= provider["interval_max_seconds"]
-        ):
-            raise ValueError(
-                "interval_min_seconds must be positive and at most interval_max_seconds"
-            )
-        pages = provider.get("max_pages", 2)
-        detail_requests = provider.get("max_detail_requests", 1)
-        if detail_requests < 0:
-            raise ValueError("max_detail_requests must be nonnegative")
-        if provider_name == "tui" and detail_requests > 3:
-            # Each TUI detail request is one full Playwright navigation (heavier
-            # than an HTTP request); this is the simple per-cycle browser-
-            # navigation budget: 1 fixed listing navigation + at most 3 detail
-            # navigations. Raising it needs a deliberate config change, not a
-            # silent default.
-            raise ValueError(
-                "TUI max_detail_requests must be at most 3 (browser navigation budget)"
-            )
-        if pages is not None and pages < 1:
-            raise ValueError("max_pages must be positive or null")
-        if provider_name == "tui":
-            # Same simple browser-navigation budget as max_detail_requests above:
-            # unlike ITAKA's HTTP pagination, `null` (unlimited) is not supported
-            # here -- every TUI page is a full Playwright navigation, and this
-            # provider must never traverse an unbounded number of them.
-            if pages is None:
-                raise ValueError("TUI max_pages must not be null (no unlimited pagination)")
-            if pages > 3:
-                raise ValueError("TUI max_pages must be at most 3 (browser navigation budget)")
-        if (
-            min(
-                provider.get("max_requests", 3),
-                provider.get("timeout_seconds", 15),
-                provider.get("cycle_seconds", 60),
-                provider.get("request_gap_seconds", 5),
-            )
-            < 1
-        ):
-            raise ValueError("HTTP limits must be positive")
-        if provider_name == "itaka" and pages is not None:
-            # One robots.txt fetch, up to `pages` listing pages, up to
-            # `detail_requests` detail confirmations, all sharing one budget
-            # (itaka.py fetch()). A budget too small to ever reach a detail
-            # request would make max_detail_requests declared but unreachable.
-            required = 1 + pages + detail_requests
-            if provider.get("max_requests", 3) < required:
-                raise ValueError(
-                    "ITAKA max_requests must cover robots.txt + max_pages listing pages + "
-                    "max_detail_requests detail requests"
-                )
+
+
+def _validate_provider_limits(provider_name: str, provider: ProviderConfig) -> None:
+    """Scheduling intervals and per-cycle request/navigation budgets."""
+    if provider["interval_seconds"] < 1:
+        raise ValueError("Provider intervals must be positive")
+    has_min = "interval_min_seconds" in provider
+    has_max = "interval_max_seconds" in provider
+    if has_min != has_max:
+        raise ValueError("interval_min_seconds and interval_max_seconds must be set together")
+    if has_min and not (0 < provider["interval_min_seconds"] <= provider["interval_max_seconds"]):
+        raise ValueError("interval_min_seconds must be positive and at most interval_max_seconds")
+    pages = provider.get("max_pages", 2)
+    detail_requests = provider.get("max_detail_requests", 1)
+    if detail_requests < 0:
+        raise ValueError("max_detail_requests must be nonnegative")
+    if provider_name == "tui" and detail_requests > 3:
+        # Each TUI detail request is one full Playwright navigation (heavier
+        # than an HTTP request); this is the simple per-cycle browser-
+        # navigation budget: 1 fixed listing navigation + at most 3 detail
+        # navigations. Raising it needs a deliberate config change, not a
+        # silent default.
+        raise ValueError("TUI max_detail_requests must be at most 3 (browser navigation budget)")
+    if pages is not None and pages < 1:
+        raise ValueError("max_pages must be positive or null")
+    if provider_name == "tui":
+        # Same simple browser-navigation budget as max_detail_requests above:
+        # unlike ITAKA's HTTP pagination, `null` (unlimited) is not supported
+        # here -- every TUI page is a full Playwright navigation, and this
+        # provider must never traverse an unbounded number of them.
+        if pages is None:
+            raise ValueError("TUI max_pages must not be null (no unlimited pagination)")
+        if pages > 3:
+            raise ValueError("TUI max_pages must be at most 3 (browser navigation budget)")
     if (
-        raw["scheduler"]["idle_poll_seconds"] < 1
-        or not 0 <= raw["scheduler"]["max_backoff_exponent"] <= 20
+        min(
+            provider.get("max_requests", 3),
+            provider.get("timeout_seconds", 15),
+            provider.get("cycle_seconds", 60),
+            provider.get("request_gap_seconds", 5),
+        )
+        < 1
     ):
+        raise ValueError("HTTP limits must be positive")
+    if provider_name == "itaka" and pages is not None:
+        # One robots.txt fetch, up to `pages` listing pages, up to
+        # `detail_requests` detail confirmations, all sharing one budget
+        # (itaka.py fetch()). A budget too small to ever reach a detail
+        # request would make max_detail_requests declared but unreachable.
+        required = 1 + pages + detail_requests
+        if provider.get("max_requests", 3) < required:
+            raise ValueError(
+                "ITAKA max_requests must cover robots.txt + max_pages listing pages + "
+                "max_detail_requests detail requests"
+            )
+
+
+def _validate_scheduler(scheduler: SchedulerConfig) -> None:
+    if scheduler["idle_poll_seconds"] < 1 or not 0 <= scheduler["max_backoff_exponent"] <= 20:
         raise ValueError("Invalid scheduler timing settings")
-    validate_active_hours(raw["active_hours"])
-    validate_attractiveness_config(raw["attractiveness"])
 
 
 def load_settings() -> Settings:
@@ -260,11 +270,10 @@ def load_settings() -> Settings:
     raw = TypeAdapter(AppConfig).validate_json(
         config_path.read_text(encoding="utf-8-sig"), strict=True
     )
-    # A registered provider without its own provider_ratings entry (e.g. TUI --
-    # MVP decision: no TUI hard rating filter; use rating/review data in
-    # ranking. See experiments/tui/CURRENT_STATE.md) defaults to a disabled
-    # rule, exactly like an explicit `{"enabled": false, ...}` entry (e.g.
-    # "mock" already has one).
+    # A registered provider without its own provider_ratings entry (e.g. TUI,
+    # an MVP decision: no hard rating filter, use rating/review data only in
+    # ranking) defaults to a disabled rule, exactly like an explicit
+    # `{"enabled": false, ...}` entry (e.g. "mock" already has one).
     # This never invents a quality threshold and never touches config.json; it
     # only prevents `rating_matches()` from treating "no rule configured yet" the
     # same as "reject every offer from this provider", which `rules.get(name)

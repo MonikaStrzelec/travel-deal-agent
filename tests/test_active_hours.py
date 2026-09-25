@@ -11,11 +11,11 @@ import json
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from conftest import WriteConfig
 from travel_deal_agent.active_hours import (
     is_within_active_hours,
     parse_time_of_day,
@@ -60,26 +60,20 @@ class RecordingNotifier(Notifier):
 # --- Pure boundary behavior (travel_deal_agent.active_hours) ---------------
 
 
-def test_within_active_hours() -> None:
-    assert is_within_active_hours(DEFAULT_HOURS, warsaw("2024-01-10T12:00")) is True
-
-
-def test_just_before_active_from_is_outside() -> None:
-    assert is_within_active_hours(DEFAULT_HOURS, warsaw("2024-01-10T06:59")) is False
-
-
-def test_exactly_active_from_is_inside() -> None:
-    # active_from is inclusive.
-    assert is_within_active_hours(DEFAULT_HOURS, warsaw("2024-01-10T07:00")) is True
-
-
-def test_exactly_active_until_is_outside() -> None:
-    # active_until is exclusive, matching this project's price-band convention.
-    assert is_within_active_hours(DEFAULT_HOURS, warsaw("2024-01-10T23:30")) is False
-
-
-def test_just_after_active_until_is_outside() -> None:
-    assert is_within_active_hours(DEFAULT_HOURS, warsaw("2024-01-10T23:31")) is False
+@pytest.mark.parametrize(
+    "moment,expected",
+    [
+        pytest.param("2024-01-10T12:00", True, id="within"),
+        pytest.param("2024-01-10T06:59", False, id="just_before_active_from"),
+        # active_from is inclusive.
+        pytest.param("2024-01-10T07:00", True, id="exactly_active_from"),
+        # active_until is exclusive, matching this project's price-band convention.
+        pytest.param("2024-01-10T23:30", False, id="exactly_active_until"),
+        pytest.param("2024-01-10T23:31", False, id="just_after_active_until"),
+    ],
+)
+def test_active_hours_window_boundaries(moment: str, expected: bool) -> None:
+    assert is_within_active_hours(DEFAULT_HOURS, warsaw(moment)) is expected
 
 
 @pytest.mark.parametrize(
@@ -143,30 +137,17 @@ def test_validate_active_hours_rejects_unknown_timezone() -> None:
 # --- Startup validation via load_settings() ---------------------------------
 
 
-def test_load_settings_rejects_unknown_timezone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        pytest.param("timezone", "Not/AZone", id="unknown_timezone"),
+        pytest.param("active_from", "7am", id="malformed_time"),
+    ],
+)
+def test_load_settings_rejects_invalid_active_hours(
+    write_config: WriteConfig, field: str, value: str
 ) -> None:
-    from travel_deal_agent.config import ROOT
-
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["active_hours"]["timezone"] = "Not/AZone"
-    path = tmp_path / "invalid.json"
-    path.write_text(json.dumps(raw))
-    monkeypatch.setenv("TDA_CONFIG", str(path))
-    with pytest.raises(ValueError):
-        load_settings()
-
-
-def test_load_settings_rejects_malformed_time(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from travel_deal_agent.config import ROOT
-
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["active_hours"]["active_from"] = "7am"
-    path = tmp_path / "invalid.json"
-    path.write_text(json.dumps(raw))
-    monkeypatch.setenv("TDA_CONFIG", str(path))
+    write_config(lambda raw: raw["active_hours"].update({field: value}))
     with pytest.raises(ValueError):
         load_settings()
 

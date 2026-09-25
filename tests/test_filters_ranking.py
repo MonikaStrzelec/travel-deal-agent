@@ -20,30 +20,6 @@ def test_price_boundary(offer: Offer, settings: Settings, price: str, expected: 
 
 
 @pytest.mark.parametrize(
-    "country,stars,expected",
-    [
-        ("GR", 2, False),
-        ("GR", 3, True),
-        ("EG", 3, True),
-        ("EG", 4, True),
-        ("TN", 3, True),
-        ("ZA", 2, False),
-    ],
-)
-def test_star_rules(
-    offer: Offer, settings: Settings, country: str, stars: int, expected: bool
-) -> None:
-    assert matches(replace(offer, country=country, hotel_stars=stars), settings.filters) is expected
-
-
-@pytest.mark.parametrize("country", ["EG", "TN", "ZA", "KE", "MA", "TR", "AL", "BG"])
-def test_former_four_star_countries_accept_three_stars(
-    offer: Offer, settings: Settings, country: str
-) -> None:
-    assert matches(replace(offer, country=country, hotel_stars=3), settings.filters)
-
-
-@pytest.mark.parametrize(
     "airport,expected",
     [("LCJ", True), ("WAW", True), ("WMI", True), ("KTW", True), ("WRO", True), ("KRK", False)],
 )
@@ -99,35 +75,17 @@ def test_budget_is_per_person_for_two_travelers(offer: Offer, settings: Settings
     assert not matches(replace(candidate, number_of_people=3), settings.filters)
 
 
-def test_optional_duration_limit(offer: Offer, settings: Settings) -> None:
-    long_stay = replace(
-        offer,
-        return_date=offer.departure_date + timedelta(days=15),  # type: ignore
-    )
-    filters: FilterConfig = {**settings.filters, "min_nights": None, "max_nights": 14}
-    assert not matches(long_stay, filters)
-    filters["max_nights"] = None
-    assert matches(long_stay, filters)
-
-
-def test_no_duration_limits_allows_any_stay_length(offer: Offer, settings: Settings) -> None:
-    """The current business decision: stay length is unrestricted when both bounds
-    are null (production config.json), so a good 3-, 5-, 10- or 14-night deal must
-    still be found."""
-    filters: FilterConfig = {**settings.filters, "min_nights": None, "max_nights": None}
-    for nights in (3, 5, 10, 14):
-        candidate = replace(
-            offer,
-            return_date=offer.departure_date + timedelta(days=nights),  # type: ignore
-        )
-        assert matches(candidate, filters)
-
-
 @pytest.mark.parametrize(
     "min_nights,max_nights,nights,expected",
     [
+        # Both bounds null (production config.json): stay length is unrestricted,
+        # so a good 3-, 5-, 10-, 14- or 15-night deal must still be found.
         (None, None, 3, True),
+        (None, None, 5, True),
+        (None, None, 10, True),
         (None, None, 14, True),
+        (None, None, 15, True),
+        (None, 14, 15, False),
         (7, None, 6, False),
         (7, None, 7, True),
         (None, 10, 10, True),

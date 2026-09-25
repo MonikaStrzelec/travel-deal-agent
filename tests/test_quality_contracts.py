@@ -1,6 +1,5 @@
 """Behavioral regressions for configuration and dependency boundaries."""
 
-import json
 import sqlite3
 from dataclasses import replace
 from datetime import date
@@ -8,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import WriteConfig
 from travel_deal_agent.config import ROOT, Settings, load_settings
 from travel_deal_agent.config_types import ProviderConfig
 from travel_deal_agent.models import Offer
@@ -16,8 +16,6 @@ from travel_deal_agent.providers.mock import MockProvider
 from travel_deal_agent.providers.registry import build_providers
 from travel_deal_agent.scheduler import Scheduler
 from travel_deal_agent.storage import Store
-
-TEST_CONFIG = Path(__file__).resolve().parent / "fixtures" / "test_config.json"
 
 
 def test_registry_accepts_an_injected_source_factory() -> None:
@@ -42,7 +40,7 @@ def test_registry_rejects_unknown_enabled_source() -> None:
 
 
 def test_registered_provider_without_a_rating_rule_defaults_to_disabled(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    settings: Settings, write_config: WriteConfig
 ) -> None:
     # A provider can be registered under `providers` with no agreed native-
     # rating threshold yet. Without a default, `rating_matches()` would treat
@@ -55,12 +53,11 @@ def test_registered_provider_without_a_rating_rule_defaults_to_disabled(
     # scale is confirmed by captured data -- see provider_ratings.tui), so
     # this test exercises the fallback with a synthetic unconfigured provider
     # instead of relying on TUI staying unconfigured.
-    config = json.loads(TEST_CONFIG.read_text(encoding="utf-8-sig"))
-    config["providers"]["future-source"] = {"enabled": False, "interval_seconds": 3600}
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(config), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_path))
-    monkeypatch.setenv("TDA_DATABASE", str(tmp_path / "offers.sqlite3"))
+    write_config(
+        lambda raw: raw["providers"].update(
+            {"future-source": {"enabled": False, "interval_seconds": 3600}}
+        )
+    )
 
     future_settings = load_settings()
 
@@ -121,135 +118,86 @@ def test_storage_failure_is_not_swallowed_by_delivery(store: Store) -> None:
 
 @pytest.mark.parametrize("invalid_value", ["2", True, None, []])
 def test_config_does_not_coerce_invalid_traveler_types(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_value: object
+    write_config: WriteConfig, invalid_value: object
 ) -> None:
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["filters"]["people"] = invalid_value
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+    write_config(lambda raw: raw["filters"].update(people=invalid_value))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="filters.people"):
         load_settings()
 
 
-def test_config_rejects_misspelled_keys(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["filters"]["min_dayz"] = 7
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+def test_config_rejects_misspelled_keys(write_config: WriteConfig) -> None:
+    write_config(lambda raw: raw["filters"].update(min_dayz=7))
 
     with pytest.raises(ValueError, match="min_dayz"):
         load_settings()
 
 
-def test_tui_detail_requests_are_capped_at_three(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tui_detail_requests_are_capped_at_three(write_config: WriteConfig) -> None:
     # A simple, explicit browser-navigation budget: TUI's max_detail_requests is
     # each a full Playwright navigation (heavier than an HTTP request), so this
     # caps the whole cycle at 1 fixed listing navigation + at most 3 detail ones,
     # regardless of how the value is configured.
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["tui"]["max_detail_requests"] = 4
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+    write_config(lambda raw: raw["providers"]["tui"].update(max_detail_requests=4))
 
     with pytest.raises(ValueError, match="max_detail_requests must be at most 3"):
         load_settings()
 
 
-def test_tui_cycle_seconds_must_be_positive(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tui_cycle_seconds_must_be_positive(write_config: WriteConfig) -> None:
     # The aggregate cycle deadline (see experiments/tui/CURRENT_STATE.md) reuses
     # the existing generic "HTTP limits must be positive" check in
     # config.py::validate_options -- no TUI-specific check was added for this.
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["tui"]["cycle_seconds"] = 0
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+    write_config(lambda raw: raw["providers"]["tui"].update(cycle_seconds=0))
 
     with pytest.raises(ValueError, match="positive"):
         load_settings()
 
 
-def test_tui_cycle_seconds_rejects_wrong_type(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["tui"]["cycle_seconds"] = "90"
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+def test_tui_cycle_seconds_rejects_wrong_type(write_config: WriteConfig) -> None:
+    write_config(lambda raw: raw["providers"]["tui"].update(cycle_seconds="90"))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="providers.tui.cycle_seconds"):
         load_settings()
 
 
-def test_itaka_max_requests_must_cover_pages_and_detail_requests(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_itaka_max_requests_must_cover_pages_and_detail_requests(write_config: WriteConfig) -> None:
     # One robots.txt fetch + max_pages listing pages + max_detail_requests detail
     # confirmations must all fit in max_requests (itaka.py fetch() shares one
     # RequestBudget across all of them); 1 + 2 + 1 = 4, so 3 is not enough.
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["itaka"]["max_pages"] = 2
-    raw["providers"]["itaka"]["max_detail_requests"] = 1
-    raw["providers"]["itaka"]["max_requests"] = 3
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+    write_config(
+        lambda raw: raw["providers"]["itaka"].update(
+            max_pages=2, max_detail_requests=1, max_requests=3
+        )
+    )
 
     with pytest.raises(ValueError, match="ITAKA max_requests must cover"):
         load_settings()
 
 
-def test_itaka_max_requests_exactly_covers_the_budget(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The production default (max_pages=2, max_detail_requests=1) needs exactly
+def test_itaka_max_requests_exactly_covers_the_budget(write_config: WriteConfig) -> None:
+    # max_pages=2 plus max_detail_requests=1 needs exactly
     # 4 requests (1 robots.txt + 2 listing + 1 detail); this must not raise.
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["itaka"]["max_pages"] = 2
-    raw["providers"]["itaka"]["max_detail_requests"] = 1
-    raw["providers"]["itaka"]["max_requests"] = 4
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+    write_config(
+        lambda raw: raw["providers"]["itaka"].update(
+            max_pages=2, max_detail_requests=1, max_requests=4
+        )
+    )
 
     load_settings()
 
 
-def test_itaka_unlimited_pages_skips_the_budget_arithmetic_check(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_itaka_unlimited_pages_skips_the_budget_arithmetic_check(write_config: WriteConfig) -> None:
     # max_pages=null means unbounded pagination -- the exact request count is
     # not known upfront (RequestBudget's own deadline/max_requests guard the
     # runtime instead), so the static arithmetic check does not apply.
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["itaka"]["max_pages"] = None
-    raw["providers"]["itaka"]["max_requests"] = 1
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+    write_config(lambda raw: raw["providers"]["itaka"].update(max_pages=None, max_requests=1))
 
     load_settings()
 
 
-def test_tui_provider_rejects_unknown_field(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    raw["providers"]["tui"]["cycle_secondss"] = 90
-    config_file = tmp_path / "invalid.json"
-    config_file.write_text(json.dumps(raw), encoding="utf-8")
-    monkeypatch.setenv("TDA_CONFIG", str(config_file))
+def test_tui_provider_rejects_unknown_field(write_config: WriteConfig) -> None:
+    write_config(lambda raw: raw["providers"]["tui"].update(cycle_secondss=90))
 
     with pytest.raises(ValueError, match="cycle_secondss"):
         load_settings()

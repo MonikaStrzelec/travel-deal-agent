@@ -17,9 +17,10 @@ from travel_deal_agent.filtering import matches
 from travel_deal_agent.models import LocalMandatoryCost, Offer, duplicate_key
 from travel_deal_agent.notification_content import NotificationMessage
 from travel_deal_agent.pipeline import OfferPipeline
+from travel_deal_agent.providers.boundary import mapping
 from travel_deal_agent.providers.http import Response
 from travel_deal_agent.providers.itaka import ItakaProvider
-from travel_deal_agent.providers.itaka_data import mapping, normalize_rate
+from travel_deal_agent.providers.itaka_data import normalize_rate
 from travel_deal_agent.providers.itaka_details import confirm_detail, map_multiroom_fields
 from travel_deal_agent.providers.itaka_rsc import FlightData
 from travel_deal_agent.storage import Store
@@ -135,7 +136,6 @@ def test_captured_mapping_leaves_only_unavailable_rate_type_and_transport(revers
 
 
 def test_captured_field_sources_map_exact_values_without_inventing_flights() -> None:
-    # Arrange
     fixture = mapping_evidence()
     objects = fixture["objects"]
     assert isinstance(objects, list)
@@ -144,9 +144,7 @@ def test_captured_field_sources_map_exact_values_without_inventing_flights() -> 
     expected = mapping(groups[0])["rateId"]
     assert isinstance(expected, str)
     selected: dict[str, object] = {}
-    # Act
     map_multiroom_fields(FlightData(variants_html(objects)), expected, selected)
-    # Assert
     assert selected == {
         "supplierObjectId": "FUERIOC",
         "beginDate": "2026-10-05",
@@ -173,13 +171,10 @@ def aliased_evidence(fixture: Evidence) -> list[object]:
 
 
 def test_alias_mapping_passes_unchanged_validation_when_evidence_is_complete() -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     listing = normalize_rate(fixture["listing"], [])
     html = variants_html(aliased_evidence(fixture))
-    # Act
     confirmed = confirm_detail(listing, fixture["listing"], html)
-    # Assert
     assert confirmed.variant_verified and confirmed.price_is_complete
     assert confirmed.booking_total_price == Decimal("7058")
     assert confirmed.offer_id == confirmed.variant_identity == listing.offer_id
@@ -194,13 +189,11 @@ def test_alias_mapping_passes_unchanged_validation_when_evidence_is_complete() -
     ],
 )
 def test_conflicting_alias_context_fails_closed(field: str, value: object) -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     objects = aliased_evidence(fixture)
     conflicting = deepcopy(mapping(objects[2]))
     conflicting[field] = value
     objects.append(conflicting)
-    # Act / Assert
     with pytest.raises(ValueError, match="Conflicting detail evidence"):
         confirm_detail(
             normalize_rate(fixture["listing"], []), fixture["listing"], variants_html(objects)
@@ -257,9 +250,7 @@ def test_expected_variant_selected_independently_of_order(reverse: bool, contain
             + json.dumps([1, "a:" + json.dumps(variant) + "\n"])
             + ")</script>"
         )
-    # Act
     confirmed = confirm_detail(listing, fixture["listing"], html)
-    # Assert
     assert confirmed.variant_verified and confirmed.price_is_complete
     assert confirmed.booking_total_price == Decimal("7058")
     assert confirmed.offer_id == confirmed.variant_identity == listing.offer_id
@@ -268,14 +259,12 @@ def test_expected_variant_selected_independently_of_order(reverse: bool, contain
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_conflicting_expected_variants_never_confirm(reverse: bool) -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     conflicting = deepcopy(fixture["variant"])
     conflicting["beginDate"] = "2026-09-18"
     objects: list[object] = [fixture["variant"], conflicting, fixture["summary"]]
     if reverse:
         objects.reverse()
-    # Act / Assert
     with pytest.raises(ValueError, match="Conflicting detail evidence for rate_id=.*beginDate"):
         confirm_detail(
             normalize_rate(fixture["listing"], []), fixture["listing"], variants_html(objects)
@@ -283,7 +272,6 @@ def test_conflicting_expected_variants_never_confirm(reverse: bool) -> None:
 
 
 def test_incomplete_expected_group_never_borrows_other_variant_fields() -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     partial = {
         key: fixture["variant"][key] for key in ("id", "saleStatus", "participants", "price")
@@ -291,13 +279,11 @@ def test_incomplete_expected_group_never_borrows_other_variant_fields() -> None:
     other = deepcopy(fixture["variant"])
     other["id"] = "rate-B"
     html = variants_html([{"initialParticipantGroups": [partial]}, other, fixture["summary"]])
-    # Act / Assert
     with pytest.raises(ValueError, match="Incomplete or invalid detail variant for rate_id="):
         confirm_detail(normalize_rate(fixture["listing"], []), fixture["listing"], html)
 
 
 def test_same_rate_fragments_and_duplicates_can_agree() -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     variant = fixture["variant"]
     initial = {key: variant[key] for key in ("id", "saleStatus", "participants", "price")}
@@ -310,9 +296,7 @@ def test_same_rate_fragments_and_duplicates_can_agree() -> None:
             fixture["summary"],
         ]
     )
-    # Act
     result = confirm_detail(normalize_rate(fixture["listing"], []), fixture["listing"], html)
-    # Assert
     assert result.price_is_complete
     assert result.booking_total_price == Decimal("7058")
 
@@ -451,11 +435,9 @@ def test_captured_booking_prices_and_legacy_identity(
     ],
 )
 def test_conflicting_evidence_never_confirms(path: tuple[str | int, ...], value: object) -> None:
-    # Arrange
     fixture = evidence()
     listing = normalize_rate(fixture["listing"], [])
     alter(fixture, path, value)
-    # Act / Assert
     with pytest.raises(ValueError):
         confirm_detail(listing, fixture["listing"], detail_html(fixture))
 
@@ -505,28 +487,22 @@ def test_conflicting_evidence_never_confirms(path: tuple[str | int, ...], value:
 def test_variant_mismatch_reports_values(
     path: tuple[str | int, ...], value: object, diagnostic: str
 ) -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     listing = normalize_rate(fixture["listing"], [])
     alter(fixture["variant"], path, value)
-    # Act
     with pytest.raises(ValueError) as error:
         confirm_detail(listing, fixture["listing"], detail_html(fixture))
-    # Assert
     assert str(error.value) == "Detail variant does not match listing; " + diagnostic
 
 
 def test_variant_diagnostic_preserves_first_failure_order() -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     listing = normalize_rate(fixture["listing"], [])
     original_id = fixture["variant"]["id"]
     fixture["variant"]["id"] = "different"
     fixture["variant"]["supplierObjectId"] = "OTHER"
-    # Act
     with pytest.raises(ValueError) as error:
         confirm_detail(listing, fixture["listing"], detail_html(fixture))
-    # Assert
     assert str(error.value) == (
         f"Detail variant does not match listing; rate_id: listing={original_id!r}, detail='different'"
     )
@@ -594,14 +570,11 @@ def test_flight_diagnostic_identifies_direction_condition_and_values(key: str) -
 
 
 def test_normalized_titles_still_confirm() -> None:
-    # Arrange
     fixture = evidence("FUERIOC")
     listing = normalize_rate(fixture["listing"], [])
     alter(fixture, ("variant", "room", "title"), "  POKÓJ  2 OS. ")
     alter(fixture, ("variant", "meal", "title"), "  2 POSIŁKI ")
-    # Act
     result = confirm_detail(listing, fixture["listing"], detail_html(fixture))
-    # Assert
     assert result.price_is_complete
     assert result.offer_id == listing.offer_id == result.variant_identity
     assert result.booking_total_price == Decimal("7058")
@@ -609,14 +582,11 @@ def test_normalized_titles_still_confirm() -> None:
 
 @pytest.mark.parametrize("status", ["unavailable", "onRequest", "unknown"])
 def test_nonavailable_variant_remains_diagnostic(status: str) -> None:
-    # Arrange
     fixture = evidence()
     fixture["variant"]["saleStatus"] = status
-    # Act
     result = confirm_detail(
         normalize_rate(fixture["listing"], []), fixture["listing"], detail_html(fixture)
     )
-    # Assert
     assert not result.price_is_complete
     assert not result.variant_verified
     assert result.booking_total_price is None
@@ -671,7 +641,6 @@ def test_local_costs_do_not_change_eligibility_or_price(
 def test_booking_price_drives_meal_and_budget_bands(
     price: int, board: str, expected: bool, settings: Settings
 ) -> None:
-    # Arrange
     settings.filters["allowed_boards"] = ["BB", "HB", "FB", "AI", "UAI"]
     fixture = evidence()
     affordable(fixture, price)
@@ -681,11 +650,9 @@ def test_booking_price_drives_meal_and_budget_bands(
     meal = {"id": code, "title": title}
     alter(fixture, ("listing", "segments", 1, "participantGroups", 0, "meal"), meal)
     fixture["variant"]["meal"] = meal
-    # Act
     confirmed = confirm_detail(
         normalize_rate(fixture["listing"], []), fixture["listing"], detail_html(fixture)
     )
-    # Assert
     assert confirmed.price_is_complete
     assert matches(confirmed, settings.filters, today=date(2026, 9, 12)) is expected
 
@@ -701,14 +668,12 @@ def test_booking_price_drives_meal_and_budget_bands(
     ],
 )
 def test_confirmed_model_rejects_inconsistent_booking_fields(field: str, value: object) -> None:
-    # Arrange
     fixture = evidence()
     confirmed = confirm_detail(
         normalize_rate(fixture["listing"], []), fixture["listing"], detail_html(fixture)
     )
     raw = mapping(json.loads(confirmed.to_json()))
     raw[field] = str(value) if isinstance(value, Decimal) else value
-    # Act / Assert
     with pytest.raises(ValueError, match="booking price"):
         TypeAdapter(Offer).validate_json(json.dumps(raw))
 
@@ -861,7 +826,6 @@ def test_provider_detail_budget_and_failure_behavior(mode: str, settings: Settin
 
 
 def test_flight_decoder_fails_closed() -> None:
-    # Arrange / Act / Assert
     for payload in ("1:T10,short", "1:{}", "1:{}\n1:{}\n"):
         with pytest.raises(ValueError):
             FlightData("<script>self.__next_f.push(" + json.dumps([1, payload]) + ")</script>")
@@ -876,7 +840,6 @@ def test_flight_component_property_reference() -> None:
     # Arrange: retain the observed Flight element / props path convention.
     payload = '1:["$","div",null,{"children":["$","component",null,{"value":7058}]}]\n'
     data = FlightData("<script>self.__next_f.push(" + json.dumps([1, payload]) + ")</script>")
-    # Act / Assert
     assert data.resolve("$1:props:children:props:value") == 7058
 
 

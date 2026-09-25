@@ -13,16 +13,12 @@ from ..filtering import matches_criteria
 from ..models import Offer
 from .base import Provider
 from .http import RequestBudget, Transport, UrllibTransport
-from .itaka_data import normalize_page, normalize_rate, parse_page
+from .itaka_data import ParsedPage, normalize_page, normalize_rate, parse_page
 from .itaka_details import confirm_detail
 from .robots import robots_policy
 
 logger = logging.getLogger(__name__)
 BASE = "https://www.itaka.pl"
-
-# Re-exported for existing imports/tests (`from .itaka import robots_policy`);
-# the implementation now lives in .robots, shared with tui.py and wakacje.py.
-__all__ = ["robots_policy"]
 
 
 class ItakaProvider(Provider):
@@ -74,8 +70,7 @@ class ItakaProvider(Provider):
                 logger.warning("ITAKA partial coverage: request budget reached")
                 break
             url = BASE + "/last-minute/" + (f"?page={page_number}" if page_number > 1 else "")
-            parts = urlsplit(url)
-            robots_policy(robots, parts.path + ("?" + parts.query if parts.query else ""))
+            robots_policy(robots, _path_and_query(url))
             try:
                 body = budget.get(url).text
             except (TimeoutError, URLError) as exc:
@@ -104,71 +99,9 @@ class ItakaProvider(Provider):
             ):
                 raise ValueError("ITAKA repeated variants across pages")
             offers.update((offer.offer_id, offer) for offer in batch)
-            detail_candidates: list[tuple[dict[str, object], Offer, str]] = []
-            for raw in page.rates:
-                try:
-                    candidate = normalize_rate(raw, page.links)
-                except (ValueError, KeyError, TypeError):
-                    continue
-                if candidate.url is None:
-                    continue
-                detail_url = urlsplit(candidate.url)
-                if (
-                    detail_url.scheme != "https"
-                    or detail_url.netloc != "www.itaka.pl"
-                    or not detail_url.path.startswith("/wczasy/")
-                ):
-                    continue
-                detail_candidates.append((raw, candidate, candidate.url))
-            filters = self.filters
-            if filters is not None:
-                # Only spend the scarce detail request on a candidate that would
-                # already pass every hard filter from listing-only data (price,
-                # airport, stars, rating band and board -- everything
-                # `matches_criteria` checks except price completeness, which
-                # only a detail request itself can establish). A candidate that
-                # is already ineligible is dropped, not merely deprioritized: it
-                # can never pass `filtering.matches()` regardless of what detail
-                # confirmation would say, so confirming it would only spend the
-                # budget without any chance of producing an alertable offer.
-                # List order (and, with it, any tie among several still-eligible
-                # candidates) is otherwise left exactly as the listing returned it.
-                today = self.today()
-                detail_candidates = [
-                    item for item in detail_candidates if matches_criteria(item[1], filters, today)
-                ]
-            for raw, candidate, url in detail_candidates:
-                if (
-                    detail_calls >= cfg.get("max_detail_requests", 1)
-                    or budget.calls >= budget.max_requests
-                ):
-                    break
-                detail_url = urlsplit(url)
-                robots_policy(
-                    robots, detail_url.path + ("?" + detail_url.query if detail_url.query else "")
-                )
-                try:
-                    response = budget.get(url)
-                except (TimeoutError, URLError) as exc:
-                    # Same transient-vs-policy distinction as the listing fetch
-                    # above: a genuine network error skips just this candidate
-                    # (it keeps its listing-only, price_is_complete=False data)
-                    # rather than discarding every offer already gathered.
-                    logger.warning(
-                        "ITAKA detail request skipped for %s after a transient network "
-                        "error (%s); no retry",
-                        candidate.offer_id,
-                        exc,
-                    )
-                    continue
-                detail_calls += 1
-                try:
-                    offers[candidate.offer_id] = confirm_detail(candidate, raw, response.text)
-                except (ValueError, KeyError, TypeError, IndexError, OverflowError) as exc:
-                    logger.warning("ITAKA detail rejected for %s: %s", candidate.offer_id, exc)
-                    offers[candidate.offer_id] = replace(
-                        candidate, price_verification_reason=str(exc)
-                    )
+            detail_calls = self._confirm_details(
+                budget, robots, self._detail_shortlist(page), offers, detail_calls
+            )
             if page.skip + len(page.rates) >= page.count:
                 break
             if len(page.rates) != page.take:
@@ -185,3 +118,69 @@ class ItakaProvider(Provider):
             detail_calls,
         )
         return list(offers.values())
+
+    def _detail_shortlist(self, page: ParsedPage) -> list[tuple[dict[str, object], Offer, str]]:
+        """Listing candidates worth a scarce detail request, in listing order."""
+        shortlist: list[tuple[dict[str, object], Offer, str]] = []
+        for raw in page.rates:
+            try:
+                candidate = normalize_rate(raw, page.links)
+            except (ValueError, KeyError, TypeError):
+                continue
+            if candidate.url is None:
+                continue
+            detail_url = urlsplit(candidate.url)
+            if (
+                detail_url.scheme != "https"
+                or detail_url.netloc != "www.itaka.pl"
+                or not detail_url.path.startswith("/wczasy/")
+            ):
+                continue
+            shortlist.append((raw, candidate, candidate.url))
+        if self.filters is None:
+            return shortlist
+        # An offer failing any listing-only hard filter can never alert, whatever
+        # its detail page says, so it is dropped rather than deprioritized.
+        today = self.today()
+        return [item for item in shortlist if matches_criteria(item[1], self.filters, today)]
+
+    def _confirm_details(
+        self,
+        budget: RequestBudget,
+        robots: str,
+        shortlist: list[tuple[dict[str, object], Offer, str]],
+        offers: dict[str, Offer],
+        detail_calls: int,
+    ) -> int:
+        """Confirm shortlisted offers in place; return the updated detail request count."""
+        for raw, candidate, url in shortlist:
+            if (
+                detail_calls >= self.configuration.get("max_detail_requests", 1)
+                or budget.calls >= budget.max_requests
+            ):
+                break
+            robots_policy(robots, _path_and_query(url))
+            try:
+                response = budget.get(url)
+            except (TimeoutError, URLError) as exc:
+                # A transient network error skips only this candidate; it keeps
+                # its listing-only, price_is_complete=False data.
+                logger.warning(
+                    "ITAKA detail request skipped for %s after a transient network "
+                    "error (%s); no retry",
+                    candidate.offer_id,
+                    exc,
+                )
+                continue
+            detail_calls += 1
+            try:
+                offers[candidate.offer_id] = confirm_detail(candidate, raw, response.text)
+            except (ValueError, KeyError, TypeError, IndexError, OverflowError) as exc:
+                logger.warning("ITAKA detail rejected for %s: %s", candidate.offer_id, exc)
+                offers[candidate.offer_id] = replace(candidate, price_verification_reason=str(exc))
+        return detail_calls
+
+
+def _path_and_query(url: str) -> str:
+    parts = urlsplit(url)
+    return parts.path + ("?" + parts.query if parts.query else "")

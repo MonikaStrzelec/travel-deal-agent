@@ -23,7 +23,6 @@ def test_filter_batch_passes_eligible_exactly_when_matches_says_so(
     matching = offer
     non_matching = replace(offer, offer_id="non-matching", price_is_complete=False)
     pipeline = OfferPipeline(settings, store, external_providers=[])
-    # Act
     accepted = pipeline.filter_batch("mock", [matching, non_matching])
     # Assert: filter_batch's return value is exactly the set matches() accepts.
     assert accepted == [o for o in (matching, non_matching) if matches(o, settings.filters)]
@@ -40,7 +39,6 @@ def test_whitelisted_wakacje_offer_with_incomplete_price_produces_an_alert(
         offer, provider="wakacje.pl", offer_id="wakacje-e2e", price_is_complete=False, rating=8.4
     )
     pipeline = OfferPipeline(settings, store, external_providers=[])
-    # Act
     accepted = pipeline.filter_batch(candidate.provider, [candidate])
     pipeline.finalize(accepted)
     # Assert: the normal pipeline -- not a direct Store.observe call -- created a
@@ -60,9 +58,7 @@ def test_non_whitelisted_provider_with_incomplete_price_produces_no_alert(
     assert "mock" not in settings.filters.get("accept_incomplete_price_from", [])
     candidate = replace(offer, offer_id="mock-e2e", price_is_complete=False)
     pipeline = OfferPipeline(settings, store, external_providers=[])
-    # Act
     accepted = pipeline.filter_batch(candidate.provider, [candidate])
     pipeline.finalize(accepted)
-    # Assert
     assert accepted == []
     assert store.pending() == []

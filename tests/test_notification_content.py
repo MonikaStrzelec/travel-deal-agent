@@ -7,9 +7,10 @@ from decimal import Decimal
 
 import pytest
 
+from travel_deal_agent.boards import CANONICAL_BOARDS
 from travel_deal_agent.config import Settings
 from travel_deal_agent.models import LocalMandatoryCost, Offer, OperatorFee
-from travel_deal_agent.notification_content import NotificationMessage
+from travel_deal_agent.notification_content import BOARD_LABELS_PL, NotificationMessage
 from travel_deal_agent.notifications import ConsoleNotifier, deliver_pending
 from travel_deal_agent.pipeline import OfferPipeline
 from travel_deal_agent.ranking import score
@@ -80,6 +81,20 @@ def test_zo_board_renders_as_wedlug_programu(offer: Offer, store: Store) -> None
     message = NotificationMessage.from_notification(store.pending()[0]).render()
 
     assert "🍽 Według programu (ZO)" in message
+
+
+def test_uai_board_renders_with_a_readable_label(offer: Offer, store: Store) -> None:
+    candidate = replace(offer, provider="wakacje.pl", board_type="UAI")
+    store.observe(candidate, True)
+
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+
+    assert "🍽 Ultra All Inclusive (UAI)" in message
+    assert "🍽 UAI" not in message
+
+
+def test_every_canonical_board_has_a_polish_label() -> None:
+    assert set(BOARD_LABELS_PL) == CANONICAL_BOARDS
 
 
 def test_unverified_google_data_is_not_shown(offer: Offer, store: Store) -> None:

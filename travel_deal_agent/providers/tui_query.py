@@ -1,9 +1,9 @@
 """Deterministic TUI search-URL builder for one confirmed manual-recording contract.
 
-Every token here reproduces a fragment explicitly confirmed by one manual Playwright
-Codegen recording of `/wypoczynek/wyniki-wyszukiwania-samolot?q=...`. Two things in
-that reproduction are inferred, not directly confirmed, and must be checked against
-a real response before being relied on for a live run:
+Every token here reproduces a fragment confirmed by one manual Playwright Codegen
+recording of `/wypoczynek/wyniki-wyszukiwania-samolot?q=...`. Two things in that
+reproduction are inferred, not directly confirmed, and must be checked against a
+real response before being relied on for a live run:
 
 - The single ':' join character and per-token repetition (":a:CODE" once per airport,
   "board:..." once per selected board group) are inferred from the fragments shown
@@ -15,14 +15,12 @@ a real response before being relied on for a live run:
 
 Duration (`dF:<min>:dT:<max>`) is deliberately NOT narrowed to the configured
 `min_nights`/`max_nights` business range: the recording only showed TUI's own
-unmodified default, `dF:6:dT:14` (the same "6-14" preset already seen selected by
-default in prior reconnaissance of the duration facet) -- never a value someone
-actually changed. Whether the backend accepts arbitrary dF/dT pairs, or only specific
-presets, was not confirmed offline. `6-14` is used because it is the one positively
-confirmed encoding and a superset of any configured range this module accepts (see
-`_duration_tokens`). The shared `filtering.matches()` remains the sole authority that
-narrows results to the configured nights range; nothing here claims to do that
-narrowing itself.
+unmodified default, `dF:6:dT:14` -- never a value someone actually changed. Whether
+the backend accepts arbitrary dF/dT pairs, or only specific presets, was not
+confirmed. `6-14` is used because it is the one positively confirmed encoding and a
+superset of any configured range this module accepts (see `_duration_tokens`). The
+shared `filtering.matches()` remains the sole authority that narrows results to the
+configured nights range; nothing here claims to do that narrowing itself.
 
 `tripAdvisorRating:4t` was present in the recording but is intentionally NOT applied
 by default: the project's current business configuration has no minimum-rating
@@ -31,15 +29,15 @@ adding one here would introduce a new, undiscussed hard filter (reject sub-4.0 h
 before our own ranking ever sees them). If a future `provider_ratings.tui` rule is
 enabled in configuration, its floor is honored; otherwise no threshold is sent.
 
-`amountRange:%231500` is also NOT reproduced as-is: reconnaissance found `amountRange`
-labeled "Cena za wszystkich" (total party price), a distinct facet from a separate
-per-person "Cena" (`priceSelector`) facet. The 1500 typed during the manual recording
-was confirmed by the person recording it to be a mistake (they meant to enter our
-per-person cap, but this field is the party total) -- not a confirmed business value.
-This module instead computes the upstream `amountRange` value as
-`filters["max_price"] * filters["people"]` (per-person cap times party size), and
-never hardcodes 3000; the shared `filtering.matches()` remains the sole authority that
-enforces the real PLN 1500/person cap on the normalized per-person offer price.
+`amountRange:%231500` is also NOT reproduced as-is: `amountRange` is labeled "Cena za
+wszystkich" (total party price), a distinct facet from a separate per-person "Cena"
+(`priceSelector`) facet. The 1500 typed during the manual recording was a mistake
+(meant to be our per-person cap, but this field is the party total) -- not a
+confirmed business value. This module instead computes the upstream `amountRange`
+value as `filters["max_price"] * filters["people"]` (per-person cap times party
+size), and never hardcodes it; the shared `filtering.matches()` remains the sole
+authority that enforces the real per-person price cap on the normalized per-person
+offer price.
 """
 
 from decimal import Decimal
@@ -49,17 +47,17 @@ from ..config_types import FilterConfig
 
 PATH = "/wypoczynek/wyniki-wyszukiwania-samolot"
 
-# Confirmed via the airport dropdown's `availableAirports` data (prior reconnaissance);
-# KTW/LCJ/WAW/WRO were independently confirmed again in the Codegen recording.
+# Airport codes as exposed by the site's own airport dropdown; KTW/LCJ/WAW/WRO were
+# independently reconfirmed in the Codegen recording.
 KNOWN_AIRPORTS = frozenset(
     {"BZG", "GDN", "KTW", "KRK", "LCJ", "LUZ", "POZ", "RZE", "SZZ", "WAW", "WMI", "RDO", "WRO"}
 )
-# Confirmed disabled on TUI's own site (reconnaissance found `"enabled": false`).
+# Disabled on TUI's own site (`"enabled": false` in the airport dropdown data).
 # Silently excluded rather than rejected: a known, documented site limitation, not an
 # unrecognized configuration value.
 DISABLED_AIRPORTS = frozenset({"WMI"})
 
-# Confirmed board facet groups: one query token per selected checkbox in the recording.
+# One query token per selected board-type checkbox in the confirmed recording.
 BOARD_FACETS = {
     "AI": "GT06-AI GT06-XX GT06-AIP",
     "FB": "GT06-FB GT06-FBP",
@@ -68,8 +66,8 @@ BOARD_FACETS = {
 
 STAR_CODES = {3: "3s", 4: "4s", 5: "5s"}
 
-# TripAdvisor floor codes observed in the duration/rating facet definitions
-# (reconnaissance), used only if a future `provider_ratings.tui` rule enables one.
+# TripAdvisor floor codes from the site's own rating facet definitions, used only
+# if a future `provider_ratings.tui` rule enables one.
 RATING_CODES = {
     Decimal("3"): "3t",
     Decimal("3.5"): "3.5t",
@@ -127,12 +125,11 @@ def _party(filters: FilterConfig) -> tuple[str, str]:
 
 
 def _price_ceiling(filters: FilterConfig) -> str:
-    """`amountRange` is TUI's "Cena za wszystkich" (total party price) facet, confirmed
-    during reconnaissance as a distinct filter from the separate per-person `priceSelector`
-    facet. `filters["max_price"]` is our business cap PER PERSON, so the upstream value
-    must be `max_price * people`, not passed through unchanged. (An earlier manual
-    recording entered 1500 directly into this field; that was a recording mistake, not
-    a confirmed business value, and must not be treated as authoritative.)
+    """`amountRange` is TUI's "Cena za wszystkich" (total party price) facet, a
+    distinct filter from the separate per-person `priceSelector` facet.
+    `filters["max_price"]` is our business cap PER PERSON, so the upstream value
+    must be `max_price * people`, not passed through unchanged (see the module
+    docstring).
     """
     per_person = Decimal(filters["max_price"])
     if not per_person.is_finite() or per_person <= 0:
@@ -175,18 +172,10 @@ def build_search_path(filters: FilterConfig, *, page: int = 1) -> str:
     hardcoded here beyond the fixed protocol tokens (`byPlane`, `tripType`) and the
     one confirmed duration encoding documented above.
 
-    `page` (PAGINATION_LIVE_CONFIRMATION_NEEDED -- see `CURRENT_STATE.md`):
-    every real listing captured so far had `pagination.pagesCount == 1` (13
-    results fit in one `pageSize: 20` page), so a second page has never actually
-    been requested or observed. The query-parameter *name* `page` is not a
-    guess -- reconnaissance captured TUI's own Next.js data-prefetch URL for
-    this exact route defaulting to `&page=1` when the browser URL carries no
-    explicit page
-    (`_next/data/<buildId>/wypoczynek/wyniki-wyszukiwania-samolot.json?...
-    &page=1&...`). Whether appending `&page=2` here actually makes the site
-    render, and passively expose through `search/offers`, a second and
-    genuinely different page of results has never been confirmed live and is
-    not assumed; `tui.py`'s provider does not call this with `page != 1`.
+    `page` is 1-indexed, matching TUI's own Next.js data-prefetch URL for this
+    route, which defaults to `&page=1` when the browser URL carries no explicit
+    page. See `tui.py`'s module docstring for how the provider bounds the number
+    of pages it actually requests.
     """
     if filters["currency"] != "PLN":
         raise ValueError("TUI POC currently supports PLN only")

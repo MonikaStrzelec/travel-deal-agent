@@ -107,7 +107,6 @@ def cards_request(exp: dict[str, list[str]], rows: list[dict[str, object]]) -> d
 
 
 def test_product_url_accepts_relative_r_pl_path() -> None:
-    # Arrange / act / assert.
     assert product_url("/turcja-riwiera-wczasy/gardenia-hotel") == (
         "https://r.pl/turcja-riwiera-wczasy/gardenia-hotel"
     )
@@ -126,53 +125,45 @@ def test_product_url_accepts_relative_r_pl_path() -> None:
     ],
 )
 def test_product_url_rejects_unexpected_paths(value: str) -> None:
-    # Arrange / act / assert.
     with pytest.raises(RainbowDetailError):
         product_url(value)
 
 
-def test_listing_json_rejects_duplicate_fields() -> None:
-    # Arrange / act / assert.
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b'{"a": 1, "a": 2}', id="duplicate_fields"),
+        pytest.param(b"x" * 2_000_001, id="oversized_body"),
+    ],
+)
+def test_listing_json_rejects_unsafe_bodies(body: bytes) -> None:
     with pytest.raises(RainbowDetailError):
-        listing_json(b'{"a": 1, "a": 2}')
-
-
-def test_listing_json_rejects_oversized_body() -> None:
-    # Arrange / act / assert.
-    with pytest.raises(RainbowDetailError):
-        listing_json(b"x" * 2_000_001)
+        listing_json(body)
 
 
 def test_search_matches_true_for_expected_filters() -> None:
-    # Arrange.
     exp = expected()
 
-    # Act / assert.
     assert search_matches(search_request(exp), exp)
 
 
-def test_search_matches_false_when_attribute_disagrees() -> None:
-    # Arrange.
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        pytest.param({"Miasta": ["LCJ"]}, id="attribute_disagrees"),
+        # An unmodeled non-empty attribute must not be silently accepted.
+        pytest.param({"JakasInnaCecha": ["X"]}, id="unexpected_attribute"),
+    ],
+)
+def test_search_matches_false_for_unexpected_attributes(attribute: dict[str, list[str]]) -> None:
     exp = expected()
     request = search_request(exp)
-    request["Atrybuty"] = {**request["Atrybuty"], "Miasta": ["LCJ"]}  # type: ignore[dict-item]
+    request["Atrybuty"] = {**request["Atrybuty"], **attribute}  # type: ignore[dict-item]
 
-    # Act / assert.
-    assert not search_matches(request, exp)
-
-
-def test_search_matches_false_when_unexpected_attribute_is_present() -> None:
-    # Arrange: an unmodeled non-empty attribute must not be silently accepted.
-    exp = expected()
-    request = search_request(exp)
-    request["Atrybuty"] = {**request["Atrybuty"], "JakasInnaCecha": ["X"]}  # type: ignore[dict-item]
-
-    # Act / assert.
     assert not search_matches(request, exp)
 
 
 def test_matched_batches_pairs_search_and_cards() -> None:
-    # Arrange.
     exp = expected()
     search = ListingExchange(
         1, "/api/wyszukiwarka/v5.0/wyszukaj", search_request(exp), search_response([ROW])
@@ -181,10 +172,8 @@ def test_matched_batches_pairs_search_and_cards() -> None:
         2, "/api/bloczki/v5.0/pobierz-bloczki", cards_request(exp, [ROW]), [CARD]
     )
 
-    # Act.
     pairs = matched_batches([search, cards], exp)
 
-    # Assert.
     assert pairs == [(search, cards)]
 
 
@@ -216,7 +205,6 @@ def test_matched_batches_ignores_superseded_search_page() -> None:
 
 
 def test_evidence_for_returns_full_option_lists_not_combinations() -> None:
-    # Arrange.
     exp = expected()
     search = ListingExchange(
         1, "/api/wyszukiwarka/v5.0/wyszukaj", search_request(exp), search_response([ROW])
@@ -225,7 +213,6 @@ def test_evidence_for_returns_full_option_lists_not_combinations() -> None:
         2, "/api/bloczki/v5.0/pobierz-bloczki", cards_request(exp, [ROW]), [CARD]
     )
 
-    # Act.
     evidence = evidence_for(OFFER, [search, cards], exp)
 
     # Assert: raw option lists, never a fabricated airport x meal combination.
@@ -263,7 +250,6 @@ def test_evidence_for_none_without_a_matching_offer_url() -> None:
         2, "/api/bloczki/v5.0/pobierz-bloczki", cards_request(exp, [ROW]), [other]
     )
 
-    # Act / assert.
     assert evidence_for(OFFER, [search, cards], exp) is None
 
 

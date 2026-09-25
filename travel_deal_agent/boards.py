@@ -27,7 +27,6 @@ _NAMES = {
         "śniadania i obiadokolacje",
         "2 posiłki",
         "dwa posiłki",
-        # Confirmed live (TUI, GT06-HBP, 2026-09-22 reconnaissance).
         "dwa posiłki plus",
     ),
     "FB": ("fb", "full board", "3 posiłki", "trzy posiłki"),
@@ -36,21 +35,15 @@ _NAMES = {
         "według programu",
         "wg programu",
         "wyżywienie według programu",
-        # ITAKA meal facet "X" (experiments/itaka_playwright/test_search.py:29,
-        # README.md:60-64: real observed meal-filter DOM, checkbox id "X").
         "wyżywienie zgodnie z programem",
     ),
     "AI": ("ai", "all inclusive", "all inclusive 24h"),
     "UAI": ("uai", "ultra all inclusive", "all inclusive ultra", "all inclusive ultra 24h"),
 }
 _ALIASES = {name: board for board, names in _NAMES.items() for name in names}
-# Only codes observed in each source's own listing are accepted. The title must agree.
-# H/A: tests/fixtures/itaka/*.json (real captures, e.g. CFUANGE.json/RMFTULR.json:
-# {"id": "A", "title": "All inclusive"}; FUERIOC.json: {"id": "H", "title": "2 posiłki"}).
-# V/F/U/X: experiments/itaka_playwright/test_search.py:21-29 and README.md:60-64 --
-# the site's own real meal-filter checkbox DOM ("V": "3 posiłki", "F": "Śniadania",
-# "U": "Bez wyżywienia", "X": "Wyżywienie zgodnie z programem"); no separate Ultra
-# All Inclusive checkbox is implemented there, so no code is added for UAI.
+# Only codes observed in ITAKA's own listing are accepted; the title must
+# agree. No UAI code is included: ITAKA exposes no separate Ultra All
+# Inclusive meal-filter checkbox to map it from.
 ITAKA_CODES = {"H": "HB", "A": "AI", "V": "FB", "F": "BB", "U": "RO", "X": "ZO"}
 # Observed TUI board facet codes (source: TUI listing page facet definitions).
 TUI_CODES = {

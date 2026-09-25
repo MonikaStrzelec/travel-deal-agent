@@ -44,7 +44,6 @@ def test_final_sort_is_enforced_or_left_unchanged(
     ready = MagicMock()
     monkeypatch.setattr(listing, "ready", ready)
 
-    # Act.
     listing.ensure_price_sort()
 
     # Assert: unchanged sorting avoids clicks, but both paths verify final readiness.
@@ -65,7 +64,6 @@ def test_final_sort_failure_is_not_accepted(monkeypatch: pytest.MonkeyPatch) -> 
     listing = BrowserListing(cast(Page, page), Limits())
     monkeypatch.setattr(listing, "ready", MagicMock(side_effect=RainbowTimeout("sort")))
 
-    # Act / assert.
     with pytest.raises(RainbowTimeout):
         listing.ensure_price_sort()
 
@@ -90,23 +88,19 @@ def test_empty_ready_state_ignores_recommendation_cards() -> None:
 
 
 def test_wait_reports_block_instead_of_empty() -> None:
-    # Arrange.
     page = page_mock()
     page.wait_for_function.return_value.json_value.return_value = "blocked"
     listing = BrowserListing(cast(Page, page), Limits())
 
-    # Act / assert.
     with pytest.raises(RainbowBlocked):
         listing.ready()
 
 
 def test_expired_cycle_does_not_start_another_browser_operation() -> None:
-    # Arrange.
     ticks = iter([0.0, 181.0])
     page = page_mock()
     listing = BrowserListing(cast(Page, page), Limits(), clock=lambda: next(ticks))
 
-    # Act / assert.
     with pytest.raises(RainbowTimeout):
         listing.count()
     page.locator.assert_not_called()
@@ -136,7 +130,6 @@ def test_selection_clicks_associated_label_not_obscured_input(
     monkeypatch.setattr("travel_deal_agent.providers.rainbow_browser.expect", expectation)
     listing = BrowserListing(cast(Page, page), Limits())
 
-    # Act.
     listing.check(cast(Locator, target))
 
     # Assert: regression for the intercepted checkbox click, with checked-state verification.
@@ -148,13 +141,11 @@ def test_selection_clicks_associated_label_not_obscured_input(
 
 
 def test_missing_control_is_a_structure_failure() -> None:
-    # Arrange.
     page = page_mock()
     target = MagicMock(spec=Locator)
     target.count.return_value = 0
     listing = BrowserListing(cast(Page, page), Limits())
 
-    # Act / assert.
     with pytest.raises(RainbowStructureError):
         listing.check(cast(Locator, target))
     target.click.assert_not_called()
@@ -172,7 +163,6 @@ def test_dynamic_control_is_allowed_to_mount_before_uniqueness_check() -> None:
     target.wait_for.side_effect = mounted
     listing = BrowserListing(cast(Page, page), Limits())
 
-    # Act / assert.
     assert listing.unique(cast(Locator, target)) is target
     target.wait_for.assert_called_once()
 
@@ -194,7 +184,6 @@ def test_airport_panel_waits_before_reading_controls(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("travel_deal_agent.providers.rainbow_browser.expect", lambda _: assertion)
     monkeypatch.setattr(BrowserListing, "guard", lambda _: None)
 
-    # Act.
     result = BrowserListing(cast(Page, page), Limits()).airport_panel(("LCJ",))
 
     # Assert: readiness is checked before any selection; no arbitrary indexed locator.
@@ -211,11 +200,9 @@ def test_airport_panel_waits_before_reading_controls(monkeypatch: pytest.MonkeyP
 
 
 def test_airport_panel_timeout_is_explicit() -> None:
-    # Arrange.
     page = page_mock()
     page.locator.return_value.wait_for.side_effect = PlaywrightTimeout("panel missing")
 
-    # Act / assert.
     with pytest.raises(RainbowTimeout, match="airport panel did not become ready"):
         BrowserListing(cast(Page, page), Limits()).airport_panel(("LCJ",))
 
@@ -259,27 +246,22 @@ def evidence() -> ListingEvidence:
 
 
 def test_evidence_returns_none_for_an_empty_listing() -> None:
-    # Arrange.
     listing = BrowserListing(cast(Page, page_mock()), Limits())
     listing.empty = True
 
-    # Act / assert.
     assert listing.evidence(cast(Offer, MagicMock())) is None
 
 
 def test_evidence_returns_none_while_capture_is_pending_or_disabled() -> None:
-    # Arrange.
     listing = BrowserListing(cast(Page, page_mock()), Limits())
     listing.capture = MagicMock(pending=True, disabled=False, exchanges=[])
 
-    # Act / assert.
     assert listing.evidence(cast(Offer, MagicMock())) is None
 
 
 def test_evidence_records_the_url_it_authorizes_for_detail_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Arrange.
     listing = BrowserListing(cast(Page, page_mock()), Limits())
     listing.capture = MagicMock(pending=False, disabled=False, exchanges=[])
     result = evidence()
@@ -287,7 +269,6 @@ def test_evidence_records_the_url_it_authorizes_for_detail_access(
         "travel_deal_agent.providers.rainbow_browser.evidence_for", lambda *a, **k: result
     )
 
-    # Act.
     found = listing.evidence(cast(Offer, MagicMock()))
 
     # Assert: only an evidenced URL is later allowed as a detail request.
@@ -296,20 +277,16 @@ def test_evidence_records_the_url_it_authorizes_for_detail_access(
 
 
 def test_detail_html_rejects_a_url_without_matching_listing_evidence() -> None:
-    # Arrange.
     listing = BrowserListing(cast(Page, page_mock()), Limits())
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError, match="lacks matching listing evidence"):
         listing.detail_html(DETAIL_URL)
 
 
 def test_detail_html_rejects_an_exhausted_budget() -> None:
-    # Arrange.
     listing = BrowserListing(cast(Page, page_mock()), Limits(max_detail_requests=0))
     listing.allowed_details.add(DETAIL_URL)
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError, match="budget exhausted"):
         listing.detail_html(DETAIL_URL)
 
@@ -327,50 +304,42 @@ def detail_page_mock(status: int = 200, body: bytes = b"hello", url: str = DETAI
 
 
 def test_detail_html_returns_the_decoded_document_on_success() -> None:
-    # Arrange.
     page = page_mock()
     detail = detail_page_mock()
     page.context.new_page.return_value = detail
     listing = BrowserListing(cast(Page, page), Limits())
     listing.allowed_details.add(DETAIL_URL)
 
-    # Act.
     result = listing.detail_html(DETAIL_URL)
 
-    # Assert.
     assert result == "hello"
     detail.close.assert_called_once()
 
 
 def test_detail_html_rejects_blocked_status() -> None:
-    # Arrange.
     page = page_mock()
     detail = detail_page_mock(status=403)
     page.context.new_page.return_value = detail
     listing = BrowserListing(cast(Page, page), Limits())
     listing.allowed_details.add(DETAIL_URL)
 
-    # Act / assert.
     with pytest.raises(RainbowBlocked):
         listing.detail_html(DETAIL_URL)
     detail.close.assert_called_once()
 
 
 def test_detail_html_rejects_a_redirected_document() -> None:
-    # Arrange.
     page = page_mock()
     detail = detail_page_mock(url="https://r.pl/turcja-riwiera-wczasy/other-hotel")
     page.context.new_page.return_value = detail
     listing = BrowserListing(cast(Page, page), Limits())
     listing.allowed_details.add(DETAIL_URL)
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError, match="unavailable or redirected"):
         listing.detail_html(DETAIL_URL)
 
 
 def test_detail_html_rejects_an_oversized_document() -> None:
-    # Arrange.
     page = page_mock()
     detail = detail_page_mock()
     detail.goto.return_value.headers = {"content-length": str(MAX_HTML_BYTES + 1)}
@@ -378,20 +347,17 @@ def test_detail_html_rejects_an_oversized_document() -> None:
     listing = BrowserListing(cast(Page, page), Limits())
     listing.allowed_details.add(DETAIL_URL)
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError, match="exceeds size limit"):
         listing.detail_html(DETAIL_URL)
 
 
 def test_detail_html_route_only_allows_the_exact_navigation_document() -> None:
-    # Arrange.
     page = page_mock()
     detail = detail_page_mock()
     page.context.new_page.return_value = detail
     listing = BrowserListing(cast(Page, page), Limits())
     listing.allowed_details.add(DETAIL_URL)
 
-    # Act.
     listing.detail_html(DETAIL_URL)
 
     # Assert: only the exact requested navigation document is let through.

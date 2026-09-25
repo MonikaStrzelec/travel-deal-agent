@@ -11,8 +11,9 @@ from travel_deal_agent.config import Settings
 from travel_deal_agent.filtering import matches
 from travel_deal_agent.models import Offer
 from travel_deal_agent.providers.http import Response
-from travel_deal_agent.providers.itaka import ItakaProvider, robots_policy
+from travel_deal_agent.providers.itaka import ItakaProvider
 from travel_deal_agent.providers.itaka_data import normalize_rate, parse_page
+from travel_deal_agent.providers.robots import robots_policy
 from travel_deal_agent.storage import Store
 
 
@@ -110,17 +111,13 @@ def test_poznan_departure_airport_mapping(raw: dict[str, object]) -> None:
     # reconnaissance) ties title "Poznań" to IATA code "POZ" -- see
     # itaka_data.AIRPORTS.
     changed = json.loads(json.dumps(raw, ensure_ascii=False).replace("Łódź", "Poznań"))
-    # Act
     offer = normalize_rate(changed, [])
-    # Assert
     assert offer.departure_airport == "POZ"
 
 
 def test_identity_excludes_price_but_includes_variant(raw: dict[str, object]) -> None:
-    # Arrange
     original = normalize_rate(raw, [])
     repriced = json.loads(json.dumps(raw).replace("140000", "130000").replace("280000", "260000"))
-    # Act / Assert
     assert normalize_rate(repriced, []).offer_id == original.offer_id
     for before, after in [
         ("fixture-1", "fixture-2"),
@@ -134,7 +131,6 @@ def test_identity_excludes_price_but_includes_variant(raw: dict[str, object]) ->
 
 
 def test_pagination(raw: dict[str, object], settings: Settings) -> None:
-    # Arrange
     second = json.loads(json.dumps(raw).replace("fixture-1", "fixture-2"))
     transport = FakeTransport(
         [
@@ -146,9 +142,7 @@ def test_pagination(raw: dict[str, object], settings: Settings) -> None:
     provider = ItakaProvider(
         settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     offers = provider.fetch()
-    # Assert
     assert len(offers) == 2
     assert transport.urls == [
         "https://www.itaka.pl/robots.txt",
@@ -169,9 +163,7 @@ def test_transient_network_error_on_later_page_keeps_earlier_offers(
     provider = ItakaProvider(
         settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     offers = provider.fetch()
-    # Assert
     assert len(offers) == 1
     assert len(transport.urls) == 3
 
@@ -210,9 +202,7 @@ def test_transient_network_error_on_detail_request_keeps_listing_only_offer(
     provider = ItakaProvider(
         settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     offers = provider.fetch()
-    # Assert
     assert len(offers) == 1
     assert not offers[0].price_is_complete
     assert len(transport.urls) == 3
@@ -266,7 +256,6 @@ def test_no_detail_request_when_every_candidate_is_ineligible(
     provider = ItakaProvider(
         settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     offers = provider.fetch()
     # Assert: no detail request (2 requests total: robots + listing), and the
     # listing-only offer stays unconfirmed.
@@ -299,7 +288,6 @@ def test_several_eligible_candidates_keep_listing_order_and_the_detail_limit(
     provider = ItakaProvider(
         settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     provider.fetch()
     # Assert: exactly one detail request, for the first-listed candidate.
     assert len(transport.urls) == 3
@@ -326,7 +314,6 @@ def test_pagination_continues_when_page_one_has_no_detail_candidate(
     provider = ItakaProvider(
         settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
     )
-    # Act
     offers = provider.fetch()
     # Assert: both pages fetched, no detail request anywhere.
     assert len(offers) == 2
@@ -405,9 +392,7 @@ def test_shortlist_prefers_the_eligible_candidate_for_the_scarce_detail_request(
 
 @pytest.mark.parametrize("status", [301, 403, 429, 503])
 def test_no_retry_or_redirect(status: int, settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response("", status)])
-    # Act / Assert
     with pytest.raises(ValueError, match="HTTP"):
         ItakaProvider(settings.providers["itaka"], settings.filters, transport).fetch()
     assert len(transport.urls) == 1
@@ -418,16 +403,13 @@ def test_no_retry_or_redirect(status: int, settings: Settings) -> None:
     ["<html>CAPTCHA</html>", "User-agent: *\nDisallow: /last*", "User-agent: Other\nDisallow: /"],
 )
 def test_robots_fail_closed(robots: str, settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport([response(robots)])
-    # Act / Assert
     with pytest.raises(ValueError):
         ItakaProvider(settings.providers["itaka"], settings.filters, transport).fetch()
     assert len(transport.urls) == 1
 
 
 def test_repeated_page_rejected(raw: dict[str, object], settings: Settings) -> None:
-    # Arrange
     transport = FakeTransport(
         [
             response("User-agent: *\nDisallow: /api"),
@@ -435,7 +417,6 @@ def test_repeated_page_rejected(raw: dict[str, object], settings: Settings) -> N
             response(html([raw], count=2)),
         ]
     )
-    # Act / Assert
     with pytest.raises(ValueError, match="pagination"):
         ItakaProvider(
             settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
@@ -443,14 +424,12 @@ def test_repeated_page_rejected(raw: dict[str, object], settings: Settings) -> N
 
 
 def test_schema_change_fails_closed() -> None:
-    # Arrange / Act / Assert
     with pytest.raises(ValueError):
         parse_page("<html>Challenge</html>")
     assert robots_policy("User-agent: *\nDisallow: /api*\nCrawl-delay: 10", "/last-minute/") == 10
 
 
 def test_unverified_price_cannot_pass_even_if_cheap(offer: Offer, settings: Settings) -> None:
-    # Arrange / Act / Assert
     assert not matches(
         replace(offer, price_is_complete=False, price_per_person=Decimal("1")), settings.filters
     )
@@ -466,11 +445,8 @@ def test_unverified_price_cannot_pass_even_if_cheap(offer: Offer, settings: Sett
     ],
 )
 def test_uncertain_fees_remove_price(raw: dict[str, object], before: str, after: str) -> None:
-    # Arrange
     changed = json.loads(json.dumps(raw, separators=(",", ":")).replace(before, after))
-    # Act
     candidate = normalize_rate(changed, [])
-    # Assert
     assert candidate.price_per_person is None
     assert candidate.total_price is None
     assert not candidate.price_is_complete
@@ -484,7 +460,6 @@ def test_configurable_page_and_request_budgets(
     request_limit: int,
     expected: int,
 ) -> None:
-    # Arrange
     cfg = settings.providers["itaka"].copy()
     cfg["max_pages"] = maximum
     cfg["max_requests"] = request_limit
@@ -495,32 +470,9 @@ def test_configurable_page_and_request_budgets(
     transport = FakeTransport(
         [response("User-agent: *\nDisallow: /api")] + [response(p) for p in pages]
     )
-    # Act
     offers = ItakaProvider(cfg, settings.filters, transport, sleep=lambda _: None).fetch()
-    # Assert
     assert len(offers) == expected
     assert len(transport.urls) == expected + 1
-
-
-def test_request_spacing_and_deadline() -> None:
-    from travel_deal_agent.providers.http import RequestBudget
-
-    # Arrange
-    now = [0.0]
-
-    def sleep(seconds: float) -> None:
-        now[0] += seconds
-
-    transport = FakeTransport([response("a"), response("b")])
-    budget = RequestBudget(transport, 3, 15, 9, 5, lambda: now[0], sleep)
-    # Act
-    budget.get("https://example.invalid/1")
-    budget.get("https://example.invalid/2")
-    # Assert
-    assert now[0] == 5
-    with pytest.raises(ValueError, match="deadline"):
-        budget.get("https://example.invalid/3")
-    assert len(transport.urls) == 2
 
 
 def test_timeout_propagates_without_retry(settings: Settings) -> None:
@@ -528,13 +480,11 @@ def test_timeout_propagates_without_retry(settings: Settings) -> None:
         def get(self, url: str, timeout: float) -> Response:
             raise TimeoutError("synthetic timeout")
 
-    # Arrange / Act / Assert
     with pytest.raises(TimeoutError):
         ItakaProvider(settings.providers["itaka"], settings.filters, TimeoutTransport()).fetch()
 
 
 def test_unknown_source_fields_remain_unknown(raw: dict[str, object]) -> None:
-    # Arrange
     changed = json.loads(
         json.dumps(raw)
         .replace("bulgaria", "unmapped")
@@ -542,9 +492,7 @@ def test_unknown_source_fields_remain_unknown(raw: dict[str, object]) -> None:
         .replace("5.4", "6.5")
         .replace("All inclusive", "Ambiguous")
     )
-    # Act
     offer = normalize_rate(changed, [])
-    # Assert
     assert offer.country is None
     assert offer.hotel_stars is None
     assert offer.rating is None
@@ -552,18 +500,14 @@ def test_unknown_source_fields_remain_unknown(raw: dict[str, object]) -> None:
 
 
 def test_unmodeled_flight_number_changes_identity(raw: dict[str, object]) -> None:
-    # Arrange
     original = normalize_rate(raw, [])
     changed = json.loads(json.dumps(raw))
     changed["segments"][0]["flightNumber"] = "SYN123"
-    # Act / Assert
     assert normalize_rate(changed, []).offer_id != original.offer_id
 
 
 def test_hotel_review_update_preserves_identity(raw: dict[str, object]) -> None:
-    # Arrange
     original = normalize_rate(raw, [])
     changed = json.loads(json.dumps(raw))
     changed["segments"][1]["content"]["reviews"]["reviewsNumber"] = 124
-    # Act / Assert
     assert normalize_rate(changed, []).offer_id == original.offer_id

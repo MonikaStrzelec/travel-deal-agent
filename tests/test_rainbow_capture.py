@@ -39,40 +39,30 @@ def capture() -> ListingCapture:
     return ListingCapture(cast(Page, page_mock()))
 
 
-def test_ignores_unrelated_requests() -> None:
-    # Arrange.
+@pytest.mark.parametrize(
+    "path,method",
+    [
+        pytest.param("/api/other/v1", "POST", id="unrelated_path"),
+        pytest.param(SEARCH_PATH, "GET", id="get_to_listing_path"),
+    ],
+)
+def test_ignores_requests_other_than_listing_posts(path: str, method: str) -> None:
     c = capture()
 
-    # Act.
-    c.started(request_mock("/api/other/v1"))
+    c.started(request_mock(path, method=method))
 
-    # Assert.
     assert c.count == 0 and not c.pending and not c.disabled
 
 
-def test_ignores_get_requests_to_listing_paths() -> None:
-    # Arrange.
-    c = capture()
-
-    # Act.
-    c.started(request_mock(SEARCH_PATH, method="GET"))
-
-    # Assert.
-    assert c.count == 0
-
-
 def test_captures_matching_search_exchange() -> None:
-    # Arrange.
     c = capture()
     body = json.dumps({"Sortowanie": "cena-asc"}).encode("utf-8")
     request = request_mock(SEARCH_PATH, body=body)
     respond(request, body=b'{"Wynik": [], "CzyCenaZaOsobe": true}')
 
-    # Act.
     c.started(request)
     c.finished(request)
 
-    # Assert.
     assert len(c.exchanges) == 1
     assert c.exchanges[0].path == SEARCH_PATH
     assert c.exchanges[0].request == {"Sortowanie": "cena-asc"}
@@ -81,128 +71,91 @@ def test_captures_matching_search_exchange() -> None:
 
 
 def test_request_budget_exceeded_disables_capture() -> None:
-    # Arrange.
     c = capture()
 
-    # Act.
     for _ in range(MAX_CAPTURE_REQUESTS + 1):
         c.started(request_mock())
 
-    # Assert.
     assert c.disabled and c.exchanges == [] and c.pending == {}
 
 
-def test_oversized_request_body_disables_capture() -> None:
-    # Arrange.
+@pytest.mark.parametrize(
+    "body",
+    [pytest.param(b"x" * 200_000, id="oversized"), pytest.param(b"not json", id="unreadable")],
+)
+def test_unusable_request_body_disables_capture(body: bytes) -> None:
     c = capture()
 
-    # Act.
-    c.started(request_mock(body=b"x" * 200_000))
+    c.started(request_mock(body=body))
 
-    # Assert.
-    assert c.disabled
-
-
-def test_unreadable_request_body_disables_capture() -> None:
-    # Arrange.
-    c = capture()
-
-    # Act.
-    c.started(request_mock(body=b"not json"))
-
-    # Assert.
     assert c.disabled
 
 
 def test_failed_pending_request_disables_capture_without_retry() -> None:
-    # Arrange.
     c = capture()
     request = request_mock()
     c.started(request)
 
-    # Act.
     c.failed(request)
 
-    # Assert.
     assert c.disabled
 
 
-def test_unsuccessful_response_disables_capture() -> None:
-    # Arrange.
+@pytest.mark.parametrize(
+    "status,content_length",
+    [
+        pytest.param(500, None, id="unsuccessful_status"),
+        pytest.param(200, "3000000", id="oversized_response"),
+    ],
+)
+def test_unusable_response_disables_capture(status: int, content_length: str | None) -> None:
     c = capture()
     request = request_mock()
-    respond(request, status=500)
+    respond(request, status=status, body=b'{"Wynik": [], "CzyCenaZaOsobe": true}')
+    if content_length is not None:
+        request.response.return_value.headers = {"content-length": content_length}
     c.started(request)
 
-    # Act.
     c.finished(request)
 
-    # Assert.
-    assert c.disabled
-
-
-def test_oversized_response_disables_capture() -> None:
-    # Arrange.
-    c = capture()
-    request = request_mock()
-    respond(request, body=b'{"Wynik": [], "CzyCenaZaOsobe": true}')
-    request.response.return_value.headers = {"content-length": "3000000"}
-    c.started(request)
-
-    # Act.
-    c.finished(request)
-
-    # Assert.
     assert c.disabled
 
 
 def test_blocked_response_status_raises_on_check() -> None:
-    # Arrange.
     c = capture()
     request = request_mock()
     response = respond(request, status=403)
 
-    # Act.
     c.response(response)
 
-    # Assert.
     with pytest.raises(RainbowBlocked):
         c.check()
 
 
 def test_synchronize_times_out_and_disables() -> None:
-    # Arrange.
     page = page_mock()
     page.wait_for_event.side_effect = PlaywrightTimeout("no matching pair arrived")
     c = ListingCapture(cast(Page, page))
 
-    # Act.
     c.synchronize({"sortowanie": ["cena-asc"]}, timeout=lambda: 100.0)
 
-    # Assert.
     assert c.disabled
 
 
 def test_synchronize_skips_wait_once_already_disabled() -> None:
-    # Arrange.
     c = capture()
     c.disable("test setup")
     page = cast(MagicMock, c.page)
 
-    # Act.
     c.synchronize({"sortowanie": ["cena-asc"]}, timeout=lambda: 100.0)
 
-    # Assert.
     page.wait_for_event.assert_not_called()
 
 
 def test_close_removes_all_listeners() -> None:
-    # Arrange.
     c = capture()
     page = cast(MagicMock, c.page)
 
-    # Act.
     c.close()
 
-    # Assert.
     assert page.remove_listener.call_count == 4

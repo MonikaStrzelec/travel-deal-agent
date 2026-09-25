@@ -4,6 +4,8 @@ No network access, no fuzzy matching -- see travel_deal_agent/climate.py for
 what these numbers mean and why country fallback is restricted to MT/AL/CY/BG.
 """
 
+import pytest
+
 from travel_deal_agent.climate import typical_daytime_temperature
 
 
@@ -14,10 +16,6 @@ def test_known_region_returns_correct_month() -> None:
 def test_january_and_december_are_distinct_ends_of_the_table() -> None:
     assert typical_daytime_temperature("TR", "Riwiera Turecka / Side", 1) == 15
     assert typical_daytime_temperature("TR", "Riwiera Turecka / Side", 12) == 17
-
-
-def test_unrecognized_region_and_no_fallback_country_is_none() -> None:
-    assert typical_daytime_temperature("TR", "Nieznana Miejscowość", None) is None
 
 
 def test_month_none_is_none() -> None:
@@ -46,27 +44,36 @@ def test_fuerteventura_resolves_to_canary_islands_not_spain_country_fallback() -
     )
 
 
-def test_turkey_has_no_country_fallback() -> None:
-    assert typical_daytime_temperature("TR", None, 7) is None
-    assert typical_daytime_temperature("TR", "Some Unmapped Town", 7) is None
+@pytest.mark.parametrize(
+    "country,destination,month",
+    [
+        ("TR", None, 7),
+        ("TR", "Some Unmapped Town", 7),
+        ("HR", "Unmapped Croatian Town", 7),
+        ("MA", "Unmapped Moroccan Town", 7),
+    ],
+)
+def test_country_without_fallback_is_none(
+    country: str, destination: str | None, month: int
+) -> None:
+    assert typical_daytime_temperature(country, destination, month) is None
 
 
-def test_malta_falls_back_to_country_when_destination_is_missing() -> None:
-    assert typical_daytime_temperature("MT", None, 1) == 16
-
-
-def test_albania_falls_back_to_country_when_destination_is_missing() -> None:
-    assert typical_daytime_temperature("AL", None, 10) == 24
-
-
-def test_cyprus_and_bulgaria_country_fallback() -> None:
-    assert typical_daytime_temperature("CY", "Unmapped Cyprus Resort", 6) == 31
-    assert typical_daytime_temperature("BG", "Unmapped Bulgaria Resort", 6) == 27
-
-
-def test_croatia_and_morocco_have_no_country_fallback() -> None:
-    assert typical_daytime_temperature("HR", "Unmapped Croatian Town", 7) is None
-    assert typical_daytime_temperature("MA", "Unmapped Moroccan Town", 7) is None
+@pytest.mark.parametrize(
+    "country,destination,month,expected",
+    [
+        # Destination missing entirely.
+        ("MT", None, 1, 16),
+        ("AL", None, 10, 24),
+        # Destination present but not mapped to a region.
+        ("CY", "Unmapped Cyprus Resort", 6, 31),
+        ("BG", "Unmapped Bulgaria Resort", 6, 27),
+    ],
+)
+def test_allowlisted_country_falls_back_to_country_table(
+    country: str, destination: str | None, month: int, expected: int
+) -> None:
+    assert typical_daytime_temperature(country, destination, month) == expected
 
 
 def test_marsa_alam_and_marsa_el_alam_aliases() -> None:

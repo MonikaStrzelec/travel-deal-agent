@@ -9,6 +9,7 @@ here contacts tui.pl or uses Playwright.
 """
 
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -45,7 +46,7 @@ def raw_offer(**overrides: object) -> dict[str, Any]:
 
 
 def offer(**overrides: object) -> Offer:
-    return normalize_offer(raw_offer(**overrides), NOW, source="search_xhr")
+    return normalize_offer(raw_offer(**overrides), NOW)
 
 
 def realtime(**overrides: object) -> str:
@@ -105,9 +106,7 @@ def test_non_charter_offer_is_left_unconfirmed() -> None:
     body = json.loads(REALTIME_AVAILABLE)
     body["tags"] = ["FIRST_MINUTE"]
     body["analyticsData"]["values"]["flight_type"] = "LINE"
-    # Act
     result = confirm_realtime_price(base, json.dumps(body))
-    # Assert
     assert result.price_is_complete is False
     assert "CHARTER_PACKAGE_NOT_CONFIRMED" in (result.price_verification_reason or "")
 
@@ -119,9 +118,7 @@ def test_missing_charter_tag_alone_is_not_enough() -> None:
     base = offer()
     body = json.loads(REALTIME_AVAILABLE)
     body["tags"] = ["FIRST_MINUTE"]
-    # Act
     result = confirm_realtime_price(base, json.dumps(body))
-    # Assert
     assert result.price_is_complete is False
     assert "CHARTER_PACKAGE_NOT_CONFIRMED" in (result.price_verification_reason or "")
 
@@ -131,13 +128,11 @@ def test_guarantee_fund_disagreeing_with_the_confirmed_rate_is_rejected() -> Non
     # match (15+15)*2=60 -- a possible rate change, never silently trusted.
     base = offer()
     body = realtime_price(priceGuaranteeFund=99)
-    # Act / Assert
     with pytest.raises(ValueError, match="disagrees with the confirmed charter-package"):
         confirm_realtime_price(base, body)
 
 
 def test_real_response_reports_a_mandatory_fee_not_in_the_listing_price() -> None:
-    # Arrange / Act
     parsed = parse_realtime_price(REALTIME_AVAILABLE)
     # Assert: documents the actual discovery -- a confirmed mandatory fund fee
     # (Turystyczny Fundusz Gwarancyjny/Pomocowy) sitting outside totalPrice.
@@ -152,9 +147,7 @@ def test_real_response_reports_a_mandatory_fee_not_in_the_listing_price() -> Non
 
 
 def test_not_available_offer_is_left_unconfirmed_without_raising() -> None:
-    # Arrange
     base = offer()
-    # Act
     result = confirm_realtime_price(base, REALTIME_NOT_AVAILABLE)
     # Assert: a legitimate business outcome, not a parsing failure.
     assert result.price_is_complete is False
@@ -162,9 +155,7 @@ def test_not_available_offer_is_left_unconfirmed_without_raising() -> None:
 
 
 def test_not_available_never_changes_identity() -> None:
-    # Arrange
     base = offer()
-    # Act
     result = confirm_realtime_price(base, REALTIME_NOT_AVAILABLE)
     # Assert: disappearance/expiry must not fabricate a new offer_id or identity.
     assert result.offer_id == base.offer_id
@@ -179,7 +170,6 @@ def test_unknown_status_is_treated_like_not_available() -> None:
     # Arrange: a hypothetical future status this project has never observed.
     base = offer()
     body = realtime(offerStatus="PENDING_REVIEW", offerCode=None, priceDetails=None)
-    # Act
     result = confirm_realtime_price(base, body)
     # Assert: no crash, no confirmation -- exactly like NOT_AVAILABLE.
     assert result.price_is_complete is False
@@ -189,32 +179,24 @@ def test_unknown_status_is_treated_like_not_available() -> None:
 # --- fail-closed identity and structure checks (raise, caller keeps the offer) --
 
 
-def test_mismatched_offer_code_is_rejected() -> None:
-    base = offer()
-    body = realtime(offerCode="SOME-OTHER-OFFER-CODE")
-    with pytest.raises(ValueError, match="offerCode mismatch"):
-        confirm_realtime_price(base, body)
-
-
-def test_missing_price_details_is_rejected() -> None:
-    base = offer()
-    body = realtime(priceDetails=None)
-    with pytest.raises(ValueError, match="priceDetails"):
-        confirm_realtime_price(base, body)
-
-
-def test_wrong_traveller_count_is_rejected() -> None:
-    base = offer()
-    body = realtime(travellerCount={"adults": 2, "children": 1})
-    with pytest.raises(ValueError, match="travellerCount"):
-        confirm_realtime_price(base, body)
-
-
-def test_currency_mismatch_is_rejected() -> None:
-    base = offer()
-    body = realtime_price(currency="EUR")
-    with pytest.raises(ValueError, match="currency"):
-        confirm_realtime_price(base, body)
+@pytest.mark.parametrize(
+    "body,match",
+    [
+        pytest.param(
+            realtime(offerCode="SOME-OTHER-OFFER-CODE"), "offerCode mismatch", id="offer_code"
+        ),
+        pytest.param(realtime(priceDetails=None), "priceDetails", id="missing_price_details"),
+        pytest.param(
+            realtime(travellerCount={"adults": 2, "children": 1}),
+            "travellerCount",
+            id="traveller_count",
+        ),
+        pytest.param(realtime_price(currency="EUR"), "currency", id="currency"),
+    ],
+)
+def test_structure_mismatch_is_rejected(body: str, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        confirm_realtime_price(offer(), body)
 
 
 # --- priceDifference is informational only, never a gate (2026-09-25 live evidence) --
@@ -317,51 +299,38 @@ def test_missing_offer_status_is_rejected() -> None:
 # --- identity binding: offerCode ties hotel/date/airport/party together --------
 
 
-def test_hotel_code_not_part_of_identity_is_rejected() -> None:
-    base = offer()
+def _with_accommodation(**fields: object) -> Callable[[dict[str, Any]], None]:
+    def mutate(body: dict[str, Any]) -> None:
+        body["accommodations"] = [{**body["accommodations"][0], **fields}]
+
+    return mutate
+
+
+def _with_departure_airport(code: str) -> Callable[[dict[str, Any]], None]:
+    def mutate(body: dict[str, Any]) -> None:
+        body["outboundFlight"] = {**body["outboundFlight"], "departureAirportCode": code}
+
+    return mutate
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        pytest.param(_with_accommodation(hotelCode="ZZZ99999"), "hotel code", id="hotel_code"),
+        pytest.param(_with_departure_airport("WAW"), "departure airport", id="departure_airport"),
+        pytest.param(_with_accommodation(duration=3), "duration", id="duration"),
+        pytest.param(
+            lambda body: body.update(startDate="2027-01-01T00:00:00"), "start date", id="start_date"
+        ),
+        pytest.param(
+            lambda body: body.update(endDate="2027-01-08T00:00:00"), "end date", id="end_date"
+        ),
+    ],
+)
+def test_identity_mismatch_is_rejected(
+    mutate: Callable[[dict[str, Any]], None], match: str
+) -> None:
     body = json.loads(REALTIME_AVAILABLE)
-    body["accommodations"] = [{**body["accommodations"][0], "hotelCode": "ZZZ99999"}]
-    with pytest.raises(ValueError, match="hotel code"):
-        confirm_realtime_price(base, json.dumps(body))
-
-
-def test_departure_airport_mismatch_is_rejected() -> None:
-    base = offer()
-    body = json.loads(REALTIME_AVAILABLE)
-    body["outboundFlight"] = {**body["outboundFlight"], "departureAirportCode": "WAW"}
-    with pytest.raises(ValueError, match="departure airport"):
-        confirm_realtime_price(base, json.dumps(body))
-
-
-def test_duration_mismatch_is_rejected() -> None:
-    base = offer()
-    body = json.loads(REALTIME_AVAILABLE)
-    body["accommodations"] = [{**body["accommodations"][0], "duration": 3}]
-    with pytest.raises(ValueError, match="duration"):
-        confirm_realtime_price(base, json.dumps(body))
-
-
-def test_start_date_mismatch_is_rejected() -> None:
-    base = offer()
-    body = json.loads(REALTIME_AVAILABLE)
-    body["startDate"] = "2027-01-01T00:00:00"
-    with pytest.raises(ValueError, match="start date"):
-        confirm_realtime_price(base, json.dumps(body))
-
-
-def test_end_date_mismatch_is_rejected() -> None:
-    base = offer()
-    body = json.loads(REALTIME_AVAILABLE)
-    body["endDate"] = "2027-01-08T00:00:00"
-    with pytest.raises(ValueError, match="end date"):
-        confirm_realtime_price(base, json.dumps(body))
-
-
-def test_matching_identity_fields_are_accepted() -> None:
-    # The positive counterpart of the mismatch tests above, using the real,
-    # unmodified capture: same hotel code embedded in offer_id, same airport,
-    # dates and duration -- this is what "offerCode binds hotel/date/airport/
-    # party" means in practice.
-    base = offer()
-    result = confirm_realtime_price(base, REALTIME_AVAILABLE)
-    assert result.offer_id == base.offer_id  # unchanged: identity is never rebuilt here
+    mutate(body)
+    with pytest.raises(ValueError, match=match):
+        confirm_realtime_price(offer(), json.dumps(body))
