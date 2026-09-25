@@ -4,7 +4,7 @@ A local Python application for finding travel deals that match a configurable bu
 trip length, departure airport and hotel-quality criteria. It remembers prices and
 avoids repeating alerts for the same trip.
 
-**Status:** offline mock by default, with opt-in ITAKA booking-price checks (manual `--force`, or continuous `--watch` once deliberately enabled), an enabled and live-tested Wakacje.pl listing provider (HTTP-only, no Playwright), and a Rainbow browser listing provider that is **blocked by source policy** (`r.pl/robots.txt` disallows the `/szukaj` search path the production flow needs) and stays disabled and CLI-rejected under `--watch`. Unverified variants remain diagnostic. TUI and Google are not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
+**Status:** three providers are enabled and live in the committed `config.json` -- ITAKA (booking-price checks via its public detail response, HTTP-only), Wakacje.pl (listing provider, HTTP-only) and TUI (listing + real-time price confirmation, via passive Playwright observation of its own site) -- plus a Rainbow browser listing provider that is **blocked by source policy** (`r.pl/robots.txt` disallows the `/szukaj` search path the production flow needs) and stays disabled and CLI-rejected under `--watch`. Unverified variants remain diagnostic. Google is not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
 
 ## Problem and approach
 
@@ -513,11 +513,11 @@ run them explicitly, for example `pytest experiments/rainbow_playwright -q` or
 ### Planned sources and rollout
 
 The four primary target sources are **ITAKA, Rainbow, Wakacje.pl and TUI**. The provider
-registry remains extensible to other agencies. Implement only one real provider first;
-complete its adapter tests, normalization checks, failure handling and controlled integration
-verification before adding the next. ITAKA is the first provider under development.
-TUI rating scales and thresholds must be verified and configured before activation;
-no scale or rating policy is assumed for TUI at this stage. **Rainbow is blocked by
+registry remains extensible to other agencies. ITAKA, Wakacje.pl and TUI are enabled in the
+committed `config.json`. TUI's native rating (TripAdvisor, confirmed 1-5 scale) is configured
+for ranking/attractiveness use, but still carries no hard rating threshold
+(`filters.provider_ratings.tui.enabled: false`) -- an MVP decision, not a missing scale; see
+`experiments/tui/CURRENT_STATE.md`. **Rainbow is blocked by
 source policy, not by implementation status** -- see "Rainbow listing provider" below.
 
 ### Notification channels and content
@@ -553,7 +553,9 @@ in the message (it still drives internal sorting only). Missing information is e
 price is missing but party size and per-person price are known, the derived total is marked
 `calculated`. Final score and rating-scale maxima are persisted in the offer/outbox JSON **after**
 optional enrichment, so retries retain the original evaluation. Older snapshots remain readable
-and show unavailable score or unknown scale instead of guessing.
+and show unavailable score or unknown scale instead of guessing. When a confirmed booking total
+(mandatory operator fees included, e.g. TUI's TFG/TFP) or a known local mandatory cost is present
+on the offer, one additional 🧾 line per item is appended after the link/disclaimer lines.
 
 Example fictional message (compact Telegram format, `notification_content.NotificationMessage.render`):
 
@@ -596,6 +598,17 @@ provider scans are staggered and independently retried on failure, so there is n
 source completed a full, successful scan" signal yet to tell a genuine disappearance apart from a
 transient miss (see `AGENTS.md`/project notes for the full reasoning). `returned` above only
 relies on the existing, already-safe per-offer re-arm window, not on scan completeness.
+
+The notification outbox retries a failed delivery with a bounded exponential backoff
+(`storage.NotificationRetryPolicy`: immediate on the first failure, doubling from the second
+consecutive one, capped, and abandoned -- never deleted -- after `max_attempts`), so a
+persistently broken transport (e.g. a revoked Telegram token) cannot grow the outbox's retry
+traffic without bound. There is still no dead-letter queue or delivery alerting beyond the log.
+
+Protection against two `--watch` processes running at once against the same
+`data/offers.sqlite3` currently relies entirely on Windows Task Scheduler's own "Do not start a
+new instance" setting (see the Task Scheduler walkthrough above) -- the application itself holds
+no file lock and does not detect a second instance.
 
 ### Climate V0
 
@@ -654,27 +667,22 @@ No live scraping, API credentials, cloud deployment or GitHub publication is req
 for the current offline application.
 
 
-## Limited ITAKA adapter
+## ITAKA adapter
 
-ITAKA is disabled by default (`providers.itaka.enabled: false`). Listing-only records
+ITAKA is **enabled in the committed `config.json`** (`providers.itaka.enabled: true`),
+following offline and controlled live verification. Listing-only records
 have `price_is_complete=false`. A public detail response may confirm the same available
 two-adult variant and its full operator booking price, allowing the existing filters,
 ranking and local alerts to process it. Unverified records remain diagnostic.
 Local taxes, visas and other costs outside the operator booking are reported separately.
 
-Before an approved manual live check, disable `mock` and enable `itaka` in a local
-configuration copy selected with `TDA_CONFIG`. A single manual check runs
-`python -m travel_deal_agent --force` without `--watch`. Continuous unattended
-operation (`--watch`) is no longer CLI-rejected for ITAKA specifically: its confirmed
-operator booking price (`price_is_complete=true`) already satisfies the project's
-binding price-completeness rule (see `experiments/rainbow_playwright/CURRENT_STATE.md`).
-`providers.itaka.enabled` still defaults to `false` in the committed `config.json` —
-turning on recurring `--watch` monitoring against the real site is a separate,
-deliberate operational decision, made by editing configuration (including a
-conservative `interval_min_seconds`/`interval_max_seconds` range, e.g. 480–900 seconds,
-so requests are not perfectly periodic), not something the code change enables by
-itself. Rainbow remains CLI-rejected under `--watch` unconditionally, because its own
-price completeness is still unresolved. No live request is part of the offline test
+Continuous unattended operation (`--watch`) is not CLI-rejected for ITAKA specifically:
+its confirmed operator booking price (`price_is_complete=true`) already satisfies the
+project's binding price-completeness rule (see
+`experiments/rainbow_playwright/CURRENT_STATE.md`). Its cadence uses a conservative
+`interval_min_seconds`/`interval_max_seconds` range (480-900 seconds) so requests are not
+perfectly periodic. Rainbow remains CLI-rejected under `--watch` unconditionally, because
+its own price completeness is still unresolved. No live request is part of the offline test
 suite; successful offline checks do not prove that today's website has the same schema
 or permits access.
 
@@ -772,6 +780,30 @@ alert; repeated confirmation alone never creates a new offer or price-drop alert
 Hotel codes 30/40/50 map to 3/4/5 stars (source assessment, not a verified local category).
 `reviews.customersRating` stays on ITAKA's native 1–6 scale;
 `reviewsNumber` is retained. No component-rating averaging is performed.
+
+## TUI listing provider
+
+TUI is **enabled in the committed `config.json`** (`providers.tui.enabled: true`). It
+observes TUI's own search/offer JSON responses passively during ordinary Playwright page
+navigation (never calling the underlying API directly), then, for a small budget of
+candidates each cycle (`max_detail_requests`, currently 1), opens the offer's own detail
+page to confirm real-time availability and price. A confirmed charter-flight package tour
+sets `price_is_complete=true`, including the operator's TFG+TFP mandatory fees; every other
+outcome (not yet confirmed, sold out/unavailable, a non-charter package, or a fee that
+disagrees with the confirmed rate) fails closed and keeps `price_is_complete=false`.
+
+TUI's only native rating is TripAdvisor (confirmed 1-5 scale from captured production
+data); it is configured for ranking/attractiveness (`filters.provider_ratings.tui.scale`)
+but has no hard rating threshold (`enabled: false`) -- an MVP decision, not a missing
+scale. TUI is **not** in `filters.accept_incomplete_price_from`, so (matching the
+project's default, strict policy) an unconfirmed TUI offer never reaches eligibility. In
+practice, with the current small per-cycle detail-confirmation budget and real offers
+changing availability between scans, none of the TUI offers observed so far have been
+confirmed complete -- expected behavior given the budget and timing involved, not a defect
+in the confirmation logic itself (see the offline TUI audit for the full reason
+breakdown). Whether to add TUI to `accept_incomplete_price_from`, matching Wakacje.pl's
+listing-price-plus-disclaimer policy, is a separate, deliberate business decision, not
+made by this change.
 
 ## Meals and configurable quality rules
 

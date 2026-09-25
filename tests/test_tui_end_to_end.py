@@ -11,7 +11,8 @@ from decimal import Decimal
 from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import ProviderConfig
 from travel_deal_agent.models import Offer, duplicate_key
-from travel_deal_agent.notifications import LogNotifier
+from travel_deal_agent.notification_content import NotificationMessage
+from travel_deal_agent.notifications import LogNotifier, Notifier
 from travel_deal_agent.providers.base import Provider
 from travel_deal_agent.providers.http import Response
 from travel_deal_agent.providers.tui import TuiProvider
@@ -234,3 +235,101 @@ def test_different_departure_dates_are_never_deduplicated_into_one_offer() -> No
 
     assert duplicate_key(first) != duplicate_key(second)
     assert len(deduplicate([first, second])) == 2
+
+
+# --- full offline pipeline: price history, alert events, climate, outbox --------
+
+
+class SpyNotifier(Notifier):
+    """Captures rendered messages instead of delivering anywhere real."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send(self, notification: object) -> None:
+        message = NotificationMessage.from_notification(notification)  # type: ignore[arg-type]
+        self.sent.append((message.kind, message.render()))
+
+
+def _charter_body_for_total_price(total: int) -> str:
+    body = json.loads(charter_realtime_body())
+    body["priceDetails"]["totalPrice"] = total
+    body["priceDetails"]["totalDiscountPrice"] = total
+    body["priceDetails"]["pricePerPerson"] = total // 2
+    return json.dumps(body)
+
+
+def test_tui_price_history_drives_new_new_low_and_price_drop_alerts(
+    settings: Settings, store: Store
+) -> None:
+    """One TUI offer observed across four scans: NEW, then a drop that is also
+    the historical minimum (NEW_LOW), an increase that alerts nothing, and
+    finally a drop that is *not* a new historical minimum (PRICE_DROP).
+
+    Exercises the full production chain for TUI specifically: listing ->
+    realtime confirmation -> filtering -> ranking -> Store.observe's price
+    history/alert classification -> outbox -> compact Telegram-style
+    rendering (including the climate line) -- all offline, no network.
+    """
+    destination_raw_offer = dict(RAW_OFFER)
+    destination_raw_offer["breadcrumbs"] = [{"label": "Turcja"}, {"label": "Side"}]
+    listing_body = json.dumps({"offers": [destination_raw_offer]})
+
+    def provider_for(total_price: int) -> TuiProvider:
+        return TuiProvider(
+            CONFIG,
+            settings.filters,
+            FakeTransport([robots_response()]),
+            FakeCapture(listing_body),
+            FakeCapture(_charter_body_for_total_price(total_price)),
+            sleep=lambda _: None,
+            wall_clock=lambda: NOW,
+        )
+
+    notifier = SpyNotifier()
+
+    def run_cycle(total_price: int) -> None:
+        scheduler = Scheduler(
+            replace(
+                settings,
+                providers={
+                    name: {**cfg, "enabled": name == "tui"}
+                    for name, cfg in settings.providers.items()
+                },
+            ),
+            [FixtureTuiSource(provider_for(total_price))],
+            store,
+            notifier,
+            today=lambda: NOW.date(),
+        )
+        scheduler.run_once(force=True)
+
+    # Cycle 1: first-ever observation -> NEW, price_per_person = 1250.
+    run_cycle(2440)
+    # Cycle 2: drop to 1130, also the historical minimum so far -> NEW_LOW.
+    run_cycle(2200)
+    # Cycle 3: price rises to 1330 -> no alert, only price history recorded.
+    run_cycle(2600)
+    # Cycle 4: drop to 1280, below cycle 3 but still above the 1130 minimum -> PRICE_DROP.
+    run_cycle(2500)
+
+    kinds = [kind for kind, _ in notifier.sent]
+    assert kinds == ["new_offer", "new_low", "price_drop"]
+
+    prices = store.price_history("tui", str(RAW_OFFER["offerCode"]))
+    assert prices == [Decimal("1250"), Decimal("1130"), Decimal("1330"), Decimal("1280")]
+
+    stats = store.price_stats("tui", str(RAW_OFFER["offerCode"]))
+    assert stats is not None
+    assert stats.lowest_price == Decimal("1130")
+
+    new_offer_text = dict(notifier.sent)["new_offer"]
+    new_low_text = dict(notifier.sent)["new_low"]
+    price_drop_text = dict(notifier.sent)["price_drop"]
+
+    # Compact Polish rendering, provider-agnostic event labels.
+    assert "NAJNIŻSZA CENA" in new_low_text
+    assert "SPADEK CENY" in price_drop_text
+    # Climate V0 line: "Side" resolves to the Antalya riviera region.
+    assert "Typowo w grudniu" in new_offer_text
+    assert "°C" in new_offer_text

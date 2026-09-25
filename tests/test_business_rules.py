@@ -242,6 +242,20 @@ def test_itaka_code_requires_consistent_name(
 
 
 @pytest.mark.parametrize(
+    "title",
+    ["uai", "Ultra All Inclusive", "all inclusive ultra", "All Inclusive Ultra 24h"],
+)
+def test_uai_text_alias_normalizes_without_a_provider_code(title: str) -> None:
+    # No active provider (Wakacje.pl/ITAKA/TUI) currently has its own facet
+    # code for Ultra All Inclusive (see boards.py's ITAKA_CODES/TUI_CODES and
+    # the "no separate Ultra All Inclusive checkbox" comment), so UAI can only
+    # ever be reached through the generic text-alias path -- exercise it
+    # directly rather than leaving it covered only by tests that set
+    # board_type="UAI" straight on an Offer, bypassing normalize_board entirely.
+    assert normalize_board("wakacje.pl", title) == "UAI"
+
+
+@pytest.mark.parametrize(
     "price,board,expected",
     [
         ("999.99", "BB", True),

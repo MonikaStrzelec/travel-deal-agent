@@ -130,5 +130,6 @@ def deliver_pending(store: Store, notifier: Notifier) -> None:
             notifier.send(notification)
         except Exception:
             logger.exception("Notification %s failed; will retry later", notification["id"])
+            store.mark_retry(notification["id"])
         else:
             store.mark_delivered(notification["id"])
