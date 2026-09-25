@@ -63,6 +63,14 @@
           }
         ]
       },
+      "tui": {
+        "enabled": false,
+        "scale": {
+          "min": 1,
+          "max": 5
+        },
+        "price_bands": []
+      },
       "mock": {
         "enabled": false,
         "scale": {

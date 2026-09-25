@@ -17,6 +17,8 @@ from travel_deal_agent.providers.registry import build_providers
 from travel_deal_agent.scheduler import Scheduler
 from travel_deal_agent.storage import Store
 
+TEST_CONFIG = Path(__file__).resolve().parent / "fixtures" / "test_config.json"
+
 
 def test_registry_accepts_an_injected_source_factory() -> None:
     class AdditionalProvider(MockProvider):
@@ -40,24 +42,42 @@ def test_registry_rejects_unknown_enabled_source() -> None:
 
 
 def test_registered_provider_without_a_rating_rule_defaults_to_disabled(
-    settings: Settings,
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # TUI is registered under `providers` but config.json has no agreed native-
-    # rating threshold for it (MVP decision: no TUI hard rating filter; use
-    # rating/review data in ranking). Without this default, `rating_matches()`
-    # would treat "no rule at all" as an unconditional reject
-    # (`rules.get(name) is None -> False`), silently blocking every TUI offer on
-    # top of the intentional price_is_complete gate. The default must never
-    # invent a threshold -- it mirrors the explicit `{"enabled": false, ...}"`
-    # entry "mock" already has in config.json.
-    assert "tui" in settings.providers
-    assert settings.filters["provider_ratings"]["tui"] == {
+    # A provider can be registered under `providers` with no agreed native-
+    # rating threshold yet. Without a default, `rating_matches()` would treat
+    # "no rule at all" as an unconditional reject (`rules.get(name) is None ->
+    # False`), silently blocking every offer from that provider on top of any
+    # intentional price_is_complete gate. The default must never invent a
+    # threshold -- it mirrors the explicit `{"enabled": false, ...}` entry
+    # "mock" already has in config.json. TUI itself now carries this same
+    # `{"enabled": false, ...}` shape as an explicit config.json entry (its
+    # scale is confirmed by captured data -- see provider_ratings.tui), so
+    # this test exercises the fallback with a synthetic unconfigured provider
+    # instead of relying on TUI staying unconfigured.
+    config = json.loads(TEST_CONFIG.read_text(encoding="utf-8-sig"))
+    config["providers"]["future-source"] = {"enabled": False, "interval_seconds": 3600}
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setenv("TDA_CONFIG", str(config_path))
+    monkeypatch.setenv("TDA_DATABASE", str(tmp_path / "offers.sqlite3"))
+
+    future_settings = load_settings()
+
+    assert "future-source" in future_settings.providers
+    assert future_settings.filters["provider_ratings"]["future-source"] == {
         "enabled": False,
         "scale": None,
         "price_bands": [],
     }
     # A provider name nobody registered is unaffected and stays absent.
-    assert "not-a-real-provider" not in settings.filters["provider_ratings"]
+    assert "not-a-real-provider" not in future_settings.filters["provider_ratings"]
+    # TUI's own rule is now explicit in config.json, not injected.
+    assert settings.filters["provider_ratings"]["tui"] == {
+        "enabled": False,
+        "scale": {"min": 1.0, "max": 5.0},
+        "price_bands": [],
+    }
 
 
 def test_observation_rolls_back_when_alert_policy_fails(

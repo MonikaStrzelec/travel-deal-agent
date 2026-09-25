@@ -28,6 +28,36 @@ class RunState(TypedDict):
 
 
 @dataclass(frozen=True)
+class NotificationRetryPolicy:
+    """Bounded exponential backoff for outbox delivery retries.
+
+    A single, isolated failure retries on the very next `deliver_pending`
+    call, exactly like before this policy existed (`delay_for(1) == 0`).
+    Only *consecutive* failures of the same notification back off
+    (doubling, capped at `max_delay`), and delivery is abandoned -- but the
+    row is never deleted, so it stays visible in `notifications` for manual
+    inspection -- once `max_attempts` is reached. This keeps a persistently
+    broken transport (e.g. a revoked Telegram token) from retrying every
+    pending notification, forever, on every scheduler cycle, without
+    building a full dead-letter/alerting system.
+    """
+
+    base_delay: timedelta = timedelta(minutes=5)
+    max_delay: timedelta = timedelta(hours=6)
+    max_attempts: int = 10
+
+    def delay_for(self, attempt_count: int) -> timedelta:
+        if attempt_count <= 1:
+            return timedelta(0)
+        multiplier: int = 2 ** (attempt_count - 2)
+        delay = self.base_delay * multiplier
+        return self.max_delay if delay > self.max_delay else delay
+
+
+DEFAULT_NOTIFICATION_RETRY_POLICY = NotificationRetryPolicy()
+
+
+@dataclass(frozen=True)
 class PriceStats:
     """Derived price-history facts for one stably identified (provider, offer_id).
 
@@ -60,12 +90,14 @@ class Store:
         alert_rearm_after: timedelta | None = None,
         clock: Callable[[], datetime] = utc_now,
         price_drop_threshold: PriceDropThreshold = NO_MINIMUM_DROP,
+        notification_retry_policy: NotificationRetryPolicy = DEFAULT_NOTIFICATION_RETRY_POLICY,
     ) -> None:
         if alert_rearm_after is not None and alert_rearm_after <= timedelta(0):
             raise ValueError("Alert re-arm period must be positive")
         self.alert_rearm_after = alert_rearm_after
         self.clock = clock
         self.price_drop_threshold = price_drop_threshold
+        self.notification_retry_policy = notification_retry_policy
         path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path, timeout=10)
         self.connection.row_factory = sqlite3.Row
@@ -96,6 +128,16 @@ class Store:
         if "last_eligible_at" not in columns:
             with self.connection:
                 self.connection.execute("ALTER TABLE alert_state ADD COLUMN last_eligible_at TEXT")
+        notification_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(notifications)")
+        }
+        for name, ddl in (
+            ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("next_attempt_at", "TEXT"),
+        ):
+            if name not in notification_columns:
+                with self.connection:
+                    self.connection.execute(f"ALTER TABLE notifications ADD COLUMN {name} {ddl}")
 
     def __enter__(self) -> "Store":
         return self
@@ -298,9 +340,19 @@ class Store:
         )
 
     def pending(self) -> list[Notification]:
-        """Return undelivered outbox entries in creation order."""
+        """Return undelivered outbox entries in creation order.
+
+        Excludes a notification still waiting out its backoff delay
+        (`next_attempt_at` in the future) and one that has exhausted
+        `notification_retry_policy.max_attempts` -- the latter is abandoned,
+        not deleted, so it stays visible in `notifications` for inspection.
+        """
         rows = self.connection.execute(
-            "SELECT * FROM notifications WHERE delivered_at IS NULL ORDER BY id"
+            "SELECT * FROM notifications WHERE delivered_at IS NULL "
+            "AND attempt_count < ? "
+            "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
+            "ORDER BY id",
+            (self.notification_retry_policy.max_attempts, self.clock().isoformat()),
         ).fetchall()
         return [
             Notification(
@@ -317,6 +369,25 @@ class Store:
             self.connection.execute(
                 "UPDATE notifications SET delivered_at=? WHERE id=?",
                 (utc_now().isoformat(), notification_id),
+            )
+
+    def mark_retry(self, notification_id: int) -> None:
+        """Record one failed delivery attempt and schedule the next one.
+
+        See `NotificationRetryPolicy`: the first failure retries immediately
+        (on the next `pending()` call); only repeated, consecutive failures
+        back off, and delivery is abandoned (never deleted) once
+        `max_attempts` is reached.
+        """
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT attempt_count FROM notifications WHERE id=?", (notification_id,)
+            ).fetchone()
+            attempt_count = row["attempt_count"] + 1
+            next_attempt_at = self.clock() + self.notification_retry_policy.delay_for(attempt_count)
+            self.connection.execute(
+                "UPDATE notifications SET attempt_count=?, next_attempt_at=? WHERE id=?",
+                (attempt_count, next_attempt_at.isoformat(), notification_id),
             )
 
     def run_state(self, name: str) -> RunState | None:

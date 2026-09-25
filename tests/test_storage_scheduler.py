@@ -12,7 +12,7 @@ from travel_deal_agent.models import Offer, duplicate_key
 from travel_deal_agent.notifications import Notifier, deliver_pending
 from travel_deal_agent.providers.mock import MockProvider
 from travel_deal_agent.scheduler import Scheduler
-from travel_deal_agent.storage import Notification, Store
+from travel_deal_agent.storage import Notification, NotificationRetryPolicy, Store
 
 
 class RecordingNotifier(Notifier):
@@ -194,6 +194,42 @@ def test_first_eligible_and_cross_provider_alert(offer: Offer, store: Store) -> 
     assert store.observe(replace(offer, provider="other"), True) == []
 
 
+def test_cross_provider_group_presence_suppresses_returned_for_the_other_provider(
+    offer: Offer, settings: Settings
+) -> None:
+    """Documents a deliberate consequence of `alert_state` being keyed by
+    `duplicate_key` (the same grouping `ranking.deduplicate()` uses to show the
+    user one merged card per deal), not by `(provider, offer_id)`: the "has
+    this deal group been continuously visible" bookkeeping is shared across
+    providers offering the identical trip. One provider's unbroken presence
+    correctly keeps the whole group from ever looking "returned", even while
+    a second provider's own listing of that same group disappears and
+    reappears well past the re-arm window -- from the user's point of view
+    (one merged card), the deal was never gone. This mirrors the same
+    duplicate_key-level design already pinned by
+    `test_first_eligible_and_cross_provider_alert` for `new_offer`
+    (a second provider's first sighting of an already-announced group does
+    not re-announce it either). Not a bug -- see the cross-provider identity
+    audit in the project's TUI offline audit report for the full trace.
+    """
+    now = [datetime(2026, 9, 24, 7, tzinfo=timezone.utc)]
+    rearm = timedelta(hours=24)
+    other = replace(offer, provider="other")
+    assert duplicate_key(offer) == duplicate_key(other)
+
+    with Store(settings.database, alert_rearm_after=rearm, clock=lambda: now[0]) as store:
+        assert store.observe(offer, True) == ["new_offer"]
+        # `other` keeps the group continuously eligible every hour while
+        # `offer`'s own provider goes quiet for well over the re-arm window.
+        for _ in range(30):
+            now[0] += timedelta(hours=1)
+            assert store.observe(other, True) == []
+        # `offer` reappears after >24h of its own absence -- but the group
+        # never looked "returned" because `other` kept last_eligible_at fresh.
+        assert store.observe(offer, True) == []
+        assert [n["kind"] for n in store.pending()] == ["new_offer"]
+
+
 def test_notification_retry(store: Store, offer: Offer) -> None:
 
     class FailingNotifier(Notifier):
@@ -208,6 +244,53 @@ def test_notification_retry(store: Store, offer: Offer) -> None:
     deliver_pending(store, notifier)
     assert len(notifier.sent) == 1
     assert store.pending() == []
+
+
+def test_notification_retry_backs_off_after_consecutive_failures(
+    offer: Offer, settings: Settings
+) -> None:
+    class FailingNotifier(Notifier):
+        def send(self, notification: Notification) -> None:
+            raise RuntimeError("Offline delivery failure")
+
+    now = [datetime(2026, 9, 25, 7, tzinfo=timezone.utc)]
+    with Store(settings.database, clock=lambda: now[0]) as store:
+        store.observe(offer, True)
+        failing = FailingNotifier()
+        # 1st failure (attempt_count 0 -> 1): retries immediately, no backoff.
+        deliver_pending(store, failing)
+        assert len(store.pending()) == 1
+        # 2nd consecutive failure (attempt_count 1 -> 2): now backs off.
+        deliver_pending(store, failing)
+        assert store.pending() == []  # still backing off, not due yet
+        now[0] += timedelta(minutes=4)
+        assert store.pending() == []  # base_delay (5 min) not yet elapsed
+        now[0] += timedelta(minutes=2)
+        assert len(store.pending()) == 1  # base_delay elapsed, due again
+
+
+def test_notification_retry_gives_up_after_max_attempts(offer: Offer, settings: Settings) -> None:
+    class FailingNotifier(Notifier):
+        def send(self, notification: Notification) -> None:
+            raise RuntimeError("Offline delivery failure")
+
+    now = [datetime(2026, 9, 25, 7, tzinfo=timezone.utc)]
+    policy = NotificationRetryPolicy(
+        base_delay=timedelta(seconds=1), max_delay=timedelta(seconds=1), max_attempts=3
+    )
+    with Store(settings.database, clock=lambda: now[0], notification_retry_policy=policy) as store:
+        store.observe(offer, True)
+        failing = FailingNotifier()
+        for _ in range(policy.max_attempts):
+            deliver_pending(store, failing)
+            now[0] += timedelta(seconds=2)
+        # Abandoned after max_attempts -- never retried again, but not deleted.
+        assert store.pending() == []
+        working = RecordingNotifier()
+        deliver_pending(store, working)
+        assert working.sent == []
+        row = store.connection.execute("SELECT attempt_count FROM notifications").fetchone()
+        assert row["attempt_count"] == policy.max_attempts
 
 
 def test_scheduler_intervals_and_restart(settings: Settings, store: Store) -> None:

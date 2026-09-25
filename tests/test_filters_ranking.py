@@ -268,6 +268,13 @@ def test_duplicate_grouping(offer: Offer) -> None:
     assert duplicate_key(
         replace(offer, departure_date=(offer.departure_date or date.today()) + timedelta(days=1))
     ) != duplicate_key(offer)
+    # A different departure airport alone (same hotel/dates/board/etc.) is a
+    # separate trip and must never share price history/alert state with the
+    # original -- isolated here from the date-change case above, and from any
+    # single provider's own airport-plus-date fixture.
+    assert duplicate_key(replace(offer, departure_airport="WAW")) != duplicate_key(
+        replace(offer, departure_airport="KTW")
+    )
 
 
 def test_incomplete_duplicates_stay_separate(offer: Offer) -> None:

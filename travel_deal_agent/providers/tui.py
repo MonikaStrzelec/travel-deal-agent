@@ -22,8 +22,9 @@ this provider never fetches more pages than the site itself reports exist, and
 never guesses a page's content without requesting it.
 
 After the (possibly multi-page) listing capture, at most `max_detail_requests`
-(default 1) of the cheapest listed offers get one additional, passive detail-
-page navigation to confirm real-time price/availability (see
+(default 1) of the cheapest offers that already pass every listing-known
+filter (`filtering.matches_criteria`; see `_shortlist`) get one additional,
+passive detail-page navigation to confirm real-time price/availability (see
 `tui_price.confirm_realtime_price`), mirroring ITAKA's bounded detail-
 confirmation budget. `price_is_complete` is set to `True` only for a
 structurally confirmed charter-flight package tour whose mandatory TFG+TFP
@@ -65,9 +66,11 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from decimal import Decimal
 from urllib.parse import urlsplit
 
 from ..config_types import FilterConfig, ProviderConfig
+from ..filtering import matches_criteria
 from ..models import Offer, utc_now
 from .base import Provider
 from .http import Transport, UrllibTransport
@@ -187,20 +190,57 @@ class TuiProvider(Provider):
                 break
         return offers
 
+    def _shortlist(self, offers: list[Offer]) -> set[str]:
+        """Pick at most `max_detail_requests` offer IDs worth spending the
+        scarce real-time detail budget on: the cheapest offers that already
+        pass every listing-known filter (`filtering.matches_criteria`, which
+        never looks at `price_is_complete` -- confirming that exact price is
+        the point of the detail request this shortlist feeds). Reusing
+        `matches_criteria` directly (rather than re-deriving a second copy of
+        the same business rules) means a listing offer with an already-known
+        disqualifying field (price over budget, wrong airport/board/stars/
+        nights) never spends a detail request that could not possibly have
+        turned it eligible.
+        """
+        budget = self.configuration.get("max_detail_requests", 1)
+        today = self.wall_clock().date()
+        candidates = [
+            offer
+            for offer in offers
+            if offer.url is not None and matches_criteria(offer, self.filters, today=today)
+        ]
+        candidates.sort(key=self._shortlist_price_key)
+        return {offer.offer_id for offer in candidates[:budget]}
+
+    @staticmethod
+    def _shortlist_price_key(offer: Offer) -> Decimal:
+        # `matches_criteria` already requires a non-None price_per_person.
+        assert offer.price_per_person is not None
+        return offer.price_per_person
+
     def _confirm_candidates(
         self, offers: list[Offer], robots_text: str, timeout: float, deadline: float
     ) -> list[Offer]:
-        """Confirm at most `max_detail_requests` candidates' real-time price.
+        """Confirm at most `max_detail_requests` candidates' real-time price:
+        the cheapest offers that could plausibly pass filtering once confirmed
+        (see `_shortlist`), never simply the first offers TUI's own listing order returns.
 
         A rejected or inconclusive confirmation never fails the cycle: the
         original, unconfirmed offer is kept with its rejection reason recorded.
         """
         budget = self.configuration.get("max_detail_requests", 1)
+        shortlisted = self._shortlist(offers)
+        logger.info(
+            "TUI: %s of %s offers shortlisted for detail confirmation (budget %s)",
+            len(shortlisted),
+            len(offers),
+            budget,
+        )
         detail_calls = 0
         deadline_exceeded = False
         result: list[Offer] = []
         for offer in offers:
-            if detail_calls >= budget or offer.url is None:
+            if offer.offer_id not in shortlisted or offer.url is None:
                 result.append(offer)
                 continue
             if not deadline_exceeded and self.clock() >= deadline:

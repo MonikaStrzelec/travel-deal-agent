@@ -84,6 +84,21 @@ def test_hotel_quality_itaka_scale_normalizes_correctly(offer: Offer) -> None:
     )
 
 
+def test_hotel_quality_tui_scale_normalizes_correctly(offer: Offer) -> None:
+    # TUI's only rating is TripAdvisor, confirmed 1-5 by captured production
+    # data (tui_data.normalize_offer clamps to this range). The hard rating
+    # filter stays disabled (MVP decision, see provider_ratings.tui in
+    # config.json), but the scale itself lets normalize_rating -- and so
+    # attractiveness/ranking -- read a real TUI rating instead of treating it
+    # as unscaled and always falling back to "weak".
+    tui_rule: RatingRule = {"enabled": False, "scale": {"min": 1, "max": 5}, "price_bands": []}
+    candidate = replace(offer, provider="tui", rating=4.4, hotel_stars=4)  # (4.4-1)/(5-1)=85%
+    assert (
+        classify_hotel_quality(candidate, {"tui": tui_rule}, DEFAULT_ATTRACTIVENESS_CONFIG)
+        == "strong"
+    )
+
+
 def test_five_stars_can_raise_normal_to_strong(offer: Offer) -> None:
     rule = {"wakacje.pl": WAKACJE_RULE}
     base = replace(offer, provider="wakacje.pl", rating=8.0, hotel_stars=3)
