@@ -185,6 +185,68 @@ class NextDataScript(HTMLParser):
             self.parts.append(data)
 
 
+class OfferLinkParser(HTMLParser):
+    """Collect each offer card's own real detail-page href, keyed by its id.
+
+    Confirmed offline (`data/wakacje-recon/wczasy-combo-recon.html`, a real fetch
+    of this provider's own confirmed search query): each offer card's anchor
+    carries `data-test-offer-id="<id>"` and an `href` that keeps the exact
+    variant -- departure date, duration, board and departure-airport slug, e.g.
+    `.../luna-holiday-complex-912903.html?od-2027-01-13,7-dni,HB,z-warszawy` --
+    unlike the bare `/oferty/.../slug-id.html` URL `normalize_offer` otherwise
+    constructs from slugs alone, which carries none of that and lets Wakacje.pl
+    default to an unrelated variant once opened. One anchor per id, confirmed
+    1:1 with the `listingOffers` JSON `id` field on the very same fetched page --
+    reading it here adds no request.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: dict[int, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        attr_map = dict(attrs)
+        raw_id = attr_map.get("data-test-offer-id")
+        href = attr_map.get("href")
+        if not raw_id or not href or not raw_id.isdigit():
+            return
+        self.links.setdefault(int(raw_id), href)
+
+
+def extract_offer_links(html: str) -> dict[int, str]:
+    """Map each offer's numeric id to its real on-page detail-page href.
+
+    Best-effort only: this is read from the same already-fetched listing HTML
+    as `decode_next_data`/`extract_offers`, never a separate request. Absent or
+    unmatched markup simply yields no entry for that id -- `normalize_offer`
+    then falls back to its own reconstructed URL, exactly as it did before this
+    map existed.
+    """
+    if len(html) > MAX_HTML_BYTES:
+        raise ValueError("Wakacje.pl listing HTML exceeds size limit")
+    parser = OfferLinkParser()
+    parser.feed(html)
+    return parser.links
+
+
+def _safe_variant_href(href: str, offer_id: int) -> str | None:
+    """Only trust a real on-page href that is same-origin and names this offer.
+
+    Cheap defense-in-depth on top of the `data-test-offer-id` keying: the site
+    itself is the origin of this string (never user input), but it is still
+    untrusted HTML content, so it is never handed to a notifier unchecked.
+    """
+    if any(char.isspace() for char in href):
+        return None
+    if not href.startswith(f"{BASE}/oferty/"):
+        return None
+    if f"-{offer_id}.html" not in href.split("?", 1)[0]:
+        return None
+    return href
+
+
 def decode_next_data(html: str) -> dict[str, object]:
     """Locate the single __NEXT_DATA__ script and return its decoded JSON object."""
     if len(html) > MAX_HTML_BYTES:
@@ -271,6 +333,7 @@ def normalize_offer(
     observed_at: datetime,
     *,
     requested_departure_airport: str | None = None,
+    offer_links: dict[int, str] | None = None,
 ) -> Offer:
     """Normalize one already-specific Wakacje.pl listing card.
 
@@ -279,6 +342,10 @@ def normalize_offer(
     returned offer is required to match it exactly -- confirmed to always hold in
     reconnaissance (sec 12.1). A mismatch means the site's filtering contract
     changed and must fail loudly, not be silently accepted.
+
+    `offer_links`, when given (from `extract_offer_links` on the same fetched
+    HTML), maps this offer's numeric id to its real on-page href, which is
+    preferred over the reconstructed slug URL below -- see `OfferLinkParser`.
     """
     raw = RawOffer.model_validate(raw_dict)
     if not _AIRPORT_CODE.fullmatch(raw.departurePlaceCode):
@@ -324,6 +391,11 @@ def normalize_offer(
         if all(slugs)
         else None
     )
+    real_href = (offer_links or {}).get(raw.id)
+    if real_href is not None:
+        validated_href = _safe_variant_href(real_href, raw.id)
+        if validated_href is not None:
+            url = validated_href
 
     rating = raw.ratingValue
     if rating is not None and not 0 <= rating <= 10:
@@ -382,12 +454,16 @@ def parse_listing(
     """Full offline pipeline: decode, extract, normalize; skip unreadable records."""
     next_data = decode_next_data(html)
     raw_offers = extract_offers(next_data)
+    offer_links = extract_offer_links(html)
     result: list[Offer] = []
     for index, raw in enumerate(raw_offers):
         try:
             result.append(
                 normalize_offer(
-                    raw, observed_at, requested_departure_airport=requested_departure_airport
+                    raw,
+                    observed_at,
+                    requested_departure_airport=requested_departure_airport,
+                    offer_links=offer_links,
                 )
             )
         except (ValidationError, ValueError, KeyError, TypeError) as exc:

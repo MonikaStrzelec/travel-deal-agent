@@ -53,6 +53,24 @@ def test_full_message_contains_offer_details(
     assert "niepotwierdzona" not in message
 
 
+def test_hyperlink_uses_the_exact_offer_url_including_its_query_string(
+    offer: Offer, store: Store
+) -> None:
+    # Arrange: a Wakacje.pl-shaped variant URL (comma-joined query string,
+    # RECONNAISSANCE.md sec 11.4) -- confirms the Telegram link is never
+    # rebuilt into a bare hotel URL by the notification layer either.
+    variant_url = (
+        "https://www.wakacje.pl/oferty/malta/wyspa-malta/sliema/"
+        "preluna-sliema-1179536.html?od-2026-12-05,7-dni,HB,z-warszawy"
+    )
+    candidate = replace(offer, provider="wakacje.pl", url=variant_url)
+    store.observe(candidate, True)
+
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+
+    assert f'<a href="{variant_url}">Zobacz ofertę</a>' in message
+
+
 def test_zo_board_renders_as_wedlug_programu(offer: Offer, store: Store) -> None:
     # Arrange: ZO ("Wedlug programu") is a normal canonical board (boards.py);
     # notification_content.BOARD_LABELS_PL renders it with its full Polish label.

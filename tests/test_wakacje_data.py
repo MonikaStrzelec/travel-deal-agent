@@ -15,6 +15,7 @@ from travel_deal_agent.filtering import matches
 from travel_deal_agent.providers.wakacje_data import (
     RawOffer,
     decode_next_data,
+    extract_offer_links,
     extract_offers,
     normalize_offer,
     parse_listing,
@@ -688,6 +689,122 @@ def test_unsafe_slug_characters_leave_url_unset_not_the_whole_offer() -> None:
     # Assert: the rest of the offer is still usable.
     assert result.url is None
     assert result.hotel_name == "Laur Experience & Elegance"
+
+
+# --- real on-page href preservation (variant fidelity) -------------------------------
+#
+# Regression coverage for a real bug: a user's Telegram link for hotel "Preluna"
+# opened Wakacje.pl on an unrelated stay (different dates/price) because the
+# reconstructed `/oferty/.../slug-id.html` URL carries no query string, and
+# Wakacje.pl then defaulted to some other variant. The real on-page anchor for
+# each offer card DOES carry the exact variant in its query string (confirmed
+# via a real fetch, `data/wakacje-recon/wczasy-combo-recon.html`) -- these tests
+# confirm it is read from the already-fetched listing HTML and passed through
+# untouched, rather than being lost during URL construction.
+
+REAL_HREF = (
+    "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
+    "laur-experience-elegance-211281.html?od-2026-10-13,7-dni,all-inclusive,z-rzeszowa"
+)
+
+
+def test_real_listing_href_is_extracted_keyed_by_offer_id() -> None:
+    # Arrange
+    html = wrap([offer()]) + (
+        f'<a data-test-offer-id="211281" href="{REAL_HREF}">Laur Experience</a>'
+    )
+    # Act
+    links = extract_offer_links(html)
+    # Assert: the query string survives extraction unchanged.
+    assert links == {211281: REAL_HREF}
+
+
+def test_parse_listing_prefers_the_real_href_over_the_reconstructed_url() -> None:
+    # Arrange
+    html = wrap([offer()]) + (
+        f'<a data-test-offer-id="211281" href="{REAL_HREF}">Laur Experience</a>'
+    )
+    # Act
+    result = parse_listing(html, NOW)
+    # Assert: exact variant href passes through untouched, not the bare hotel URL.
+    assert len(result) == 1
+    assert result[0].url == REAL_HREF
+
+
+def test_normalize_offer_falls_back_to_reconstructed_url_without_a_real_href() -> None:
+    # Act: no `offer_links` given, same as every other test in this module.
+    result = normalize_offer(offer(), NOW)
+    # Assert: unchanged behavior when no real href is available.
+    assert result.url == (
+        "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
+        "laur-experience-elegance-211281.html"
+    )
+
+
+def test_real_href_for_a_different_offer_id_is_not_applied() -> None:
+    # Arrange: a href on the page for some other offer must never leak onto this one.
+    other_href = REAL_HREF.replace("211281", "999999")
+    # Act
+    result = normalize_offer(offer(), NOW, offer_links={999999: other_href})
+    # Assert: falls back to the reconstructed URL, exactly as if no href existed.
+    assert result.url == (
+        "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
+        "laur-experience-elegance-211281.html"
+    )
+
+
+def test_off_origin_href_is_rejected_not_trusted() -> None:
+    # Arrange: same id, but pointing off-site -- must never be trusted verbatim.
+    evil_href = "https://evil.example/oferty/x-211281.html?od-2026-10-13"
+    # Act
+    result = normalize_offer(offer(), NOW, offer_links={211281: evil_href})
+    # Assert
+    assert result.url == (
+        "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
+        "laur-experience-elegance-211281.html"
+    )
+
+
+def test_variant_identity_is_unaffected_by_the_real_href() -> None:
+    # Act
+    without_href = normalize_offer(offer(), NOW)
+    with_href = normalize_offer(offer(), NOW, offer_links={211281: REAL_HREF})
+    # Assert: the href only changes `url`, never the price-history/dedup identity.
+    assert with_href.variant_identity == without_href.variant_identity
+    assert with_href.offer_id == without_href.offer_id
+
+
+def test_preluna_scenario_duration_renders_8_days_7_nights() -> None:
+    """Regression for the reported case: 05.12.2026 -> 12.12.2026 must stay
+    "8 dni / 7 nocy" (7 nights, 8 calendar days) -- confirming the duration
+    calculation itself was never the bug; only the URL was.
+    """
+    # Arrange
+    from travel_deal_agent.notification_content import _stay_length
+
+    preluna = offer(
+        id=1179536,
+        name="Preluna (Sliema)",
+        urlName="preluna-sliema",
+        place={
+            "country": geo("Malta", "malta"),
+            "region": geo("Wyspa Malta", "wyspa-malta"),
+            "city": geo("Sliema", "sliema"),
+        },
+        departureDate="2026-12-05",
+        returnDate="2026-12-12",
+        duration=7,
+        durationNights=7,
+        departurePlace="Warszawa - Modlin",
+        departurePlaceCode="WMI",
+        service=2,
+        serviceDesc="HB",
+    )
+    # Act
+    result = normalize_offer(preluna, NOW)
+    # Assert
+    assert (result.return_date - result.departure_date).days == 7  # type: ignore[operator]
+    assert _stay_length(result) == "8 dni / 7 nocy"
 
 
 # --- missing / conflicting data ---------------------------------------------------------
