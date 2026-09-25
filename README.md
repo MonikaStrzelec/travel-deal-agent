@@ -368,6 +368,17 @@ Jeśli po ok. 2 minutach w pliku nie ma żadnych nowych linii, patrz sekcja
 Zatrzymanie w ten sposób nie kasuje ani nie psuje zadania — możesz je uruchomić ponownie
 ręcznie (przyciskiem Run) albo poczekać na kolejne logowanie do Windows.
 
+### Restart po aktualizacji kodu
+
+Python wczytuje pliki `.py` tylko raz, przy starcie procesu — proces działający w tle
+**nie widzi** żadnej zmiany w folderze `travel_deal_agent` (np. po `git pull` albo po ręcznej
+edycji), dopóki nie zostanie zatrzymany i uruchomiony ponownie, dokładnie tak samo jak po
+zmianie `config.json` (patrz sekcja "Godziny działania agenta" niżej). Po każdej aktualizacji
+kodu źródłowego: zatrzymaj zadanie (patrz "Jak zatrzymać agenta" wyżej), a następnie uruchom je
+ponownie (przyciskiem Run albo przez wylogowanie/zalogowanie). Proces, który działa od dawna,
+nadal będzie stabilnie pracował ze starą wersją logiki źródeł/filtrów — nie ulegnie awarii, ale
+też nie skorzysta z żadnej poprawki wprowadzonej po jego starcie.
+
 ### Co dzieje się po ponownym uruchomieniu komputera
 
 - Po ponownym uruchomieniu komputera i **zalogowaniu się do Windows**, Task Scheduler sam
