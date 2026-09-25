@@ -87,7 +87,9 @@ def main() -> None:
     try:
         scheduler = Scheduler(
             settings,
-            build_providers(settings.providers, filters=settings.filters),
+            build_providers(
+                settings.providers, filters=settings.filters, attractiveness=settings.attractiveness
+            ),
             store,
             notifier,
         )

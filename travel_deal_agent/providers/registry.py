@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 
-from ..config_types import FilterConfig, ProviderConfig
+from ..config_types import AttractivenessConfig, FilterConfig, ProviderConfig
 from .base import Provider
 from .itaka import ItakaProvider
 from .mock import MockProvider
@@ -15,6 +15,7 @@ def build_providers(
     factories: Mapping[str, Callable[[], Provider]] | None = None,
     *,
     filters: FilterConfig | None = None,
+    attractiveness: AttractivenessConfig | None = None,
 ) -> list[Provider]:
     """Instantiate enabled sources; reject unsupported names before doing any work.
 
@@ -49,7 +50,7 @@ def build_providers(
 
             if filters is None:
                 raise ValueError("TUI requires shared business filters")
-            providers.append(TuiProvider(config, filters))
+            providers.append(TuiProvider(config, filters, attractiveness=attractiveness))
             continue
         if name == "wakacje.pl" and use_builtin_dispatch:
             from .wakacje import WakacjeProvider
