@@ -217,11 +217,65 @@ def test_currency_mismatch_is_rejected() -> None:
         confirm_realtime_price(base, body)
 
 
-def test_nonzero_price_difference_is_rejected() -> None:
+# --- priceDifference is informational only, never a gate (2026-09-25 live evidence) --
+#
+# Confirmed by real captured evidence (see tui_price.py's module-level note):
+# a nonzero priceDifference reflects the realtime totalPrice's own delta from
+# the listing snapshot, not an ambiguous or incomplete price. The realtime
+# totalPrice/pricePerPerson (used for `package_price`/`booking_total_price`
+# below) are already the authoritative current price regardless of this
+# delta; no arbitrary tolerance threshold is used or needed.
+
+
+def test_realtime_price_increase_is_still_confirmed_using_realtime_amount() -> None:
     base = offer()
-    body = realtime_price(priceDifference=5)
-    with pytest.raises(ValueError, match="priceDifference"):
-        confirm_realtime_price(base, body)
+    body = realtime_price(
+        totalPrice=2788, totalDiscountPrice=2788, pricePerPerson=1394, priceDifference=2
+    )
+    result = confirm_realtime_price(base, body)
+    assert result.price_is_complete is True
+    assert result.package_price == Decimal("2788")
+    assert result.booking_total_price == Decimal("2848")  # 2788 + 60 confirmed TFG+TFP
+    assert result.price_per_person == Decimal("1424")
+    assert "differs from the listing snapshot by 2 PLN" in (result.price_verification_reason or "")
+
+
+def test_realtime_price_decrease_is_still_confirmed_using_realtime_amount() -> None:
+    base = offer()
+    body = realtime_price(
+        totalPrice=2784, totalDiscountPrice=2784, pricePerPerson=1392, priceDifference=-2
+    )
+    result = confirm_realtime_price(base, body)
+    assert result.price_is_complete is True
+    assert result.package_price == Decimal("2784")
+    assert result.booking_total_price == Decimal("2844")  # 2784 + 60 confirmed TFG+TFP
+    assert result.price_per_person == Decimal("1422")
+    assert "differs from the listing snapshot by -2 PLN" in (result.price_verification_reason or "")
+
+
+def test_large_realtime_price_change_is_still_confirmed_without_arbitrary_threshold() -> None:
+    # No abs(priceDifference) <= X tolerance anywhere: a large delta is accepted
+    # exactly like a small one, as long as every other fail-closed check
+    # (identity, dates, board, party size, charter structure, fund amount)
+    # still passes -- the API's own structure decides this, not a magic number.
+    base = offer()
+    body = realtime_price(
+        totalPrice=3286, totalDiscountPrice=3286, pricePerPerson=1643, priceDifference=500
+    )
+    result = confirm_realtime_price(base, body)
+    assert result.price_is_complete is True
+    assert result.booking_total_price == Decimal("3346")  # 3286 + 60
+
+
+def test_missing_guarantee_fund_field_is_rejected() -> None:
+    # A missing mandatory fee field (not merely a disagreeing amount, already
+    # covered by test_guarantee_fund_disagreeing_with_the_confirmed_rate_is_rejected)
+    # must still fail closed rather than silently treating it as zero/absent.
+    base = offer()
+    data = json.loads(REALTIME_AVAILABLE)
+    del data["priceDetails"]["priceGuaranteeFund"]
+    with pytest.raises(ValueError):
+        confirm_realtime_price(base, json.dumps(data))
 
 
 @pytest.mark.parametrize("field", ["totalPrice", "pricePerPerson"])
