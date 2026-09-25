@@ -1,10 +1,13 @@
 """Offline tests for the TUI detail-confirmation candidate shortlist.
 
 `TuiProvider._shortlist` picks which offer(s) get the scarce `max_detail_requests`
-real-time price check: the cheapest offers that already pass every
-listing-known filter (`filtering.matches_criteria`), never simply the first
-offer(s) in TUI's own listing order. No network, no Playwright -- capture/
-capture_price are injected fakes throughout.
+real-time price check. Only offers that already pass every listing-known
+filter (`filtering.matches_criteria`) are eligible at all; among those, the
+candidate is chosen by listing-time `attractiveness.classify_offer` category
+(HOT before GOOD before MATCH -- the existing V0 classification, never a new
+score) and only within the same category by ascending `price_per_person` --
+never simply the cheapest offer that clears the eligibility bar. No network,
+no Playwright -- capture/capture_price are injected fakes throughout.
 """
 
 import json
@@ -52,6 +55,24 @@ def raw_offer(offer_code: str, **overrides: object) -> dict[str, object]:
     }
     base.update(overrides)
     return base
+
+
+def category_offer(offer_code: str, price: int, rating: float) -> dict[str, object]:
+    """A raw offer with `hotelStandard` fixed at 3.0 (below every star-bump
+    threshold in `attractiveness.classify_hotel_quality`), so its
+    HOT/GOOD/MATCH category is controlled purely by `price` (VALUE, via the
+    fixed 6-night stay below) and `rating` (HOTEL QUALITY, via the tui native
+    1-5 scale in `tests/fixtures/test_config.json`) -- never nudged by stars.
+    `departureAirport`/`boardType` stay at their neutral/normal defaults, so
+    AIRPORT and BOARD never contribute a "strong" or "weak" level either.
+    """
+    return raw_offer(
+        offer_code,
+        discountPerPersonPrice=str(price),
+        discountFullPrice=str(price * 2),
+        tripAdvisorRating=rating,
+        hotelStandard=3.0,
+    )
 
 
 def listing_body(offers: list[dict[str, object]]) -> str:
@@ -135,6 +156,7 @@ def make_provider(
         capture_price,
         sleep=lambda _: None,
         wall_clock=lambda: NOW,
+        attractiveness=settings.attractiveness,
     )
 
 
@@ -168,23 +190,83 @@ def test_first_offer_wrong_board_detail_goes_to_second(settings: Settings) -> No
     assert "RIGHTBOARD2" in capture_price.calls[0]
 
 
-# --- 3: among several eligible candidates, the cheapest is chosen ----------------
+# --- 3: a cheaper MATCH offer loses to a pricier GOOD offer ----------------------
 
 
-def test_cheapest_eligible_candidate_is_chosen(settings: Settings) -> None:
+def test_cheaper_match_loses_to_pricier_good(settings: Settings) -> None:
     offers = [
-        raw_offer("MID3", discountPerPersonPrice="1200"),
-        raw_offer("CHEAPEST3", discountPerPersonPrice="900"),
-        raw_offer("EXPENSIVE3", discountPerPersonPrice="1400"),
+        category_offer("CHEAPMATCH3", price=1100, rating=4.1),  # normal + normal -> MATCH
+        category_offer("PRICIERGOOD3", price=1200, rating=4.5),  # normal + strong -> GOOD
     ]
     capture = FakeCapture([listing_body(offers)])
     capture_price = FakeCapture([NOT_AVAILABLE_BODY])
     make_provider(settings, capture, capture_price).fetch()
     assert len(capture_price.calls) == 1
-    assert "CHEAPEST3" in capture_price.calls[0]
+    assert "PRICIERGOOD3" in capture_price.calls[0]
 
 
-# --- 4: no potentially eligible candidate at all -> zero detail requests --------
+# --- 4: a cheaper GOOD offer loses to a pricier HOT offer ------------------------
+
+
+def test_cheaper_good_loses_to_pricier_hot(settings: Settings) -> None:
+    offers = [
+        category_offer("CHEAPGOOD4", price=500, rating=3.0),  # strong + weak -> GOOD
+        category_offer("PRICIERHOT4", price=1000, rating=4.5),  # strong + strong -> HOT
+    ]
+    capture = FakeCapture([listing_body(offers)])
+    capture_price = FakeCapture([NOT_AVAILABLE_BODY])
+    make_provider(settings, capture, capture_price).fetch()
+    assert len(capture_price.calls) == 1
+    assert "PRICIERHOT4" in capture_price.calls[0]
+
+
+# --- 5: between two HOT offers, the cheaper one is chosen ------------------------
+
+
+def test_two_hot_offers_prefers_the_cheaper(settings: Settings) -> None:
+    offers = [
+        category_offer("EXPENSIVEHOT5", price=1000, rating=4.5),
+        category_offer("CHEAPHOT5", price=800, rating=4.8),
+    ]
+    capture = FakeCapture([listing_body(offers)])
+    capture_price = FakeCapture([NOT_AVAILABLE_BODY])
+    make_provider(settings, capture, capture_price).fetch()
+    assert len(capture_price.calls) == 1
+    assert "CHEAPHOT5" in capture_price.calls[0]
+
+
+# --- 6: between two GOOD offers, the cheaper one is chosen -----------------------
+
+
+def test_two_good_offers_prefers_the_cheaper(settings: Settings) -> None:
+    offers = [
+        category_offer("EXPENSIVEGOOD6", price=1300, rating=4.6),
+        category_offer("CHEAPGOOD6", price=1200, rating=4.5),
+    ]
+    capture = FakeCapture([listing_body(offers)])
+    capture_price = FakeCapture([NOT_AVAILABLE_BODY])
+    make_provider(settings, capture, capture_price).fetch()
+    assert len(capture_price.calls) == 1
+    assert "CHEAPGOOD6" in capture_price.calls[0]
+
+
+# --- 7: among several same-category (MATCH) candidates, the cheapest wins -------
+
+
+def test_same_category_candidates_prefer_the_cheapest(settings: Settings) -> None:
+    offers = [
+        category_offer("MID7", price=1200, rating=4.1),
+        category_offer("CHEAPEST7", price=1100, rating=4.1),
+        category_offer("EXPENSIVE7", price=1250, rating=4.1),
+    ]
+    capture = FakeCapture([listing_body(offers)])
+    capture_price = FakeCapture([NOT_AVAILABLE_BODY])
+    make_provider(settings, capture, capture_price).fetch()
+    assert len(capture_price.calls) == 1
+    assert "CHEAPEST7" in capture_price.calls[0]
+
+
+# --- 8: no potentially eligible candidate at all -> zero detail requests --------
 
 
 def test_no_eligible_candidate_makes_zero_detail_requests(settings: Settings) -> None:
@@ -201,13 +283,14 @@ def test_no_eligible_candidate_makes_zero_detail_requests(settings: Settings) ->
     assert all(o.price_is_complete is False for o in result)
 
 
-# --- 5: an incomplete-price candidate still enters the shortlist ----------------
+# --- 9: an incomplete-price candidate still enters the shortlist ----------------
 
 
 def test_incomplete_price_candidate_still_enters_shortlist(settings: Settings) -> None:
     # Every TUI listing offer starts with price_is_complete=False; this is
     # exactly what the detail request exists to try to confirm, so it must
-    # never disqualify a candidate from the shortlist itself.
+    # never disqualify a candidate from the shortlist itself -- regardless of
+    # HOT/GOOD/MATCH category, which is computed from listing data alone.
     offers = [raw_offer("ONLYCANDIDATE5")]
     capture = FakeCapture([listing_body(offers)])
     capture_price = FakeCapture([NOT_AVAILABLE_BODY])
@@ -217,7 +300,7 @@ def test_incomplete_price_candidate_still_enters_shortlist(settings: Settings) -
     assert result[0].price_is_complete is False  # NOT_AVAILABLE stays unconfirmed
 
 
-# --- 6: AVAILABLE + correct mandatory fees confirms price_is_complete=True ------
+# --- 10: AVAILABLE + correct mandatory fees confirms price_is_complete=True ------
 
 
 def test_available_confirmation_sets_price_is_complete_true(settings: Settings) -> None:
@@ -229,7 +312,7 @@ def test_available_confirmation_sets_price_is_complete_true(settings: Settings) 
     assert result[0].price_per_person == 1030  # (2000 + 60 TFG/TFP) / 2
 
 
-# --- 7: NOT_AVAILABLE stays unconfirmed, ineligible, no alert path --------------
+# --- 11: NOT_AVAILABLE stays unconfirmed, ineligible, no alert path --------------
 
 
 def test_not_available_stays_incomplete_and_ineligible(settings: Settings) -> None:
@@ -247,7 +330,7 @@ def test_not_available_stays_incomplete_and_ineligible(settings: Settings) -> No
     assert matches(offer, settings.filters) is False
 
 
-# --- 8: max_detail_requests=1 is respected even with many eligible candidates ---
+# --- 12: max_detail_requests=1 is respected even with many eligible candidates ---
 
 
 def test_max_detail_requests_one_is_respected_with_many_candidates(settings: Settings) -> None:
@@ -256,4 +339,4 @@ def test_max_detail_requests_one_is_respected_with_many_candidates(settings: Set
     capture_price = FakeCapture([NOT_AVAILABLE_BODY])
     make_provider(settings, capture, capture_price, max_detail_requests=1).fetch()
     assert len(capture_price.calls) == 1
-    assert "MANY0" in capture_price.calls[0]  # cheapest of the five
+    assert "MANY0" in capture_price.calls[0]  # cheapest of the five, same category

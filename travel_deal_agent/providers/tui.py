@@ -22,11 +22,17 @@ this provider never fetches more pages than the site itself reports exist, and
 never guesses a page's content without requesting it.
 
 After the (possibly multi-page) listing capture, at most `max_detail_requests`
-(default 1) of the cheapest offers that already pass every listing-known
-filter (`filtering.matches_criteria`; see `_shortlist`) get one additional,
-passive detail-page navigation to confirm real-time price/availability (see
+(default 1) offers that already pass every listing-known filter
+(`filtering.matches_criteria`; see `_shortlist`) get one additional, passive
+detail-page navigation to confirm real-time price/availability (see
 `tui_price.confirm_realtime_price`), mirroring ITAKA's bounded detail-
-confirmation budget. `price_is_complete` is set to `True` only for a
+confirmation budget. With only one detail request per cycle to spend, the
+shortlist picks the most promising candidate rather than simply the cheapest
+one that clears the bar: candidates are ordered by their listing-time
+`attractiveness.classify_offer` category (HOT, then GOOD, then MATCH -- the
+existing V0 classification, never a new score) and only within the same
+category by ascending `price_per_person` (see `_shortlist`). `price_is_complete`
+is set to `True` only for a
 structurally confirmed charter-flight package tour whose mandatory TFG+TFP
 fund matches the officially confirmed rate -- see `tui_price`'s module
 docstring. Every other outcome (non-charter, unavailable, ambiguous,
@@ -69,7 +75,8 @@ from datetime import datetime
 from decimal import Decimal
 from urllib.parse import urlsplit
 
-from ..config_types import FilterConfig, ProviderConfig
+from ..attractiveness import DEFAULT_ATTRACTIVENESS_CONFIG, classify_offer
+from ..config_types import AttractivenessConfig, FilterConfig, ProviderConfig
 from ..filtering import matches_criteria
 from ..models import Offer, utc_now
 from .base import Provider
@@ -83,6 +90,10 @@ from .tui_query import PATH, build_search_path
 
 logger = logging.getLogger(__name__)
 BASE = "https://www.tui.pl"
+
+# Lower rank sorts first: HOT is the most promising, MATCH merely eligible.
+# `attractiveness.classify_offer` never returns anything else.
+_ATTRACTIVENESS_RANK = {"HOT": 0, "GOOD": 1, "MATCH": 2}
 
 # Re-exported for existing imports/tests (`from .tui import robots_policy`);
 # the implementation now lives in .robots, shared with itaka.py and wakacje.py.
@@ -120,6 +131,7 @@ class TuiProvider(Provider):
         sleep: Callable[[float], None] = time.sleep,
         wall_clock: Callable[[], datetime] = utc_now,
         clock: Callable[[], float] = time.monotonic,
+        attractiveness: AttractivenessConfig | None = None,
     ) -> None:
         self.configuration = configuration
         self.filters = filters
@@ -130,6 +142,9 @@ class TuiProvider(Provider):
         self.sleep = sleep
         self.wall_clock = wall_clock
         self.clock = clock
+        self.attractiveness = (
+            attractiveness if attractiveness is not None else DEFAULT_ATTRACTIVENESS_CONFIG
+        )
 
     def fetch(self) -> list[Offer]:
         cfg = self.configuration
@@ -192,15 +207,27 @@ class TuiProvider(Provider):
 
     def _shortlist(self, offers: list[Offer]) -> set[str]:
         """Pick at most `max_detail_requests` offer IDs worth spending the
-        scarce real-time detail budget on: the cheapest offers that already
-        pass every listing-known filter (`filtering.matches_criteria`, which
-        never looks at `price_is_complete` -- confirming that exact price is
-        the point of the detail request this shortlist feeds). Reusing
-        `matches_criteria` directly (rather than re-deriving a second copy of
-        the same business rules) means a listing offer with an already-known
-        disqualifying field (price over budget, wrong airport/board/stars/
-        nights) never spends a detail request that could not possibly have
-        turned it eligible.
+        scarce real-time detail budget on.
+
+        First narrowed to offers that already pass every listing-known filter
+        (`filtering.matches_criteria`, which never looks at `price_is_complete`
+        -- confirming that exact price is the point of the detail request this
+        shortlist feeds; an incomplete price never disqualifies a candidate
+        here). Reusing `matches_criteria` directly (rather than re-deriving a
+        second copy of the same business rules) means a listing offer with an
+        already-known disqualifying field (price over budget, wrong airport/
+        board/stars/nights) never spends a detail request that could not
+        possibly have turned it eligible.
+
+        With only one detail request typically available per cycle, the
+        remaining candidates are then ordered by their listing-time
+        `attractiveness.classify_offer` category (HOT before GOOD before
+        MATCH -- the existing V0 classification computed straight from
+        listing data, never a new score, and never `Offer.final_score`), and
+        only within the same category by ascending `price_per_person`; equal
+        category and price keep their original listing order (`list.sort` is
+        stable). This spends the scarce budget confirming the best-looking
+        deal, not merely the cheapest one that clears the eligibility bar.
         """
         budget = self.configuration.get("max_detail_requests", 1)
         today = self.wall_clock().date()
@@ -209,8 +236,12 @@ class TuiProvider(Provider):
             for offer in offers
             if offer.url is not None and matches_criteria(offer, self.filters, today=today)
         ]
-        candidates.sort(key=self._shortlist_price_key)
+        candidates.sort(key=self._shortlist_sort_key)
         return {offer.offer_id for offer in candidates[:budget]}
+
+    def _shortlist_sort_key(self, offer: Offer) -> tuple[int, Decimal]:
+        breakdown = classify_offer(offer, self.filters["provider_ratings"], self.attractiveness)
+        return (_ATTRACTIVENESS_RANK[breakdown.category], self._shortlist_price_key(offer))
 
     @staticmethod
     def _shortlist_price_key(offer: Offer) -> Decimal:
@@ -222,8 +253,9 @@ class TuiProvider(Provider):
         self, offers: list[Offer], robots_text: str, timeout: float, deadline: float
     ) -> list[Offer]:
         """Confirm at most `max_detail_requests` candidates' real-time price:
-        the cheapest offers that could plausibly pass filtering once confirmed
-        (see `_shortlist`), never simply the first offers TUI's own listing order returns.
+        the most attractive offers that could plausibly pass filtering once
+        confirmed (see `_shortlist`), never simply the first offers TUI's own
+        listing order returns.
 
         A rejected or inconclusive confirmation never fails the cycle: the
         original, unconfirmed offer is kept with its rejection reason recorded.
