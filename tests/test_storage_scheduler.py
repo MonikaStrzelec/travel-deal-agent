@@ -1,12 +1,11 @@
-import json
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
+from conftest import RawConfig, WriteConfig
 from travel_deal_agent.config import Settings, load_settings
 from travel_deal_agent.models import Offer, duplicate_key
 from travel_deal_agent.notifications import Notifier, deliver_pending
@@ -550,36 +549,23 @@ def test_zero_offers_is_a_successful_run_not_a_failure(settings: Settings, store
     ],
 )
 def test_invalid_interval_range_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overrides: dict[str, int]
+    write_config: WriteConfig, overrides: dict[str, int]
 ) -> None:
-    # Arrange
-    from travel_deal_agent.config import ROOT
-
-    raw = json.loads((ROOT / "config.json").read_text())
-    raw["providers"]["itaka"].update(overrides)
-    path = tmp_path / "invalid.json"
-    path.write_text(json.dumps(raw))
-    monkeypatch.setenv("TDA_CONFIG", str(path))
-    # Act / Assert
-    with pytest.raises(ValueError):
+    write_config(lambda raw: raw["providers"]["itaka"].update(overrides))
+    with pytest.raises(ValueError, match="interval_min_seconds must be positive"):
         load_settings()
 
 
 @pytest.mark.parametrize("field", ["interval_min_seconds", "interval_max_seconds"])
-def test_partial_interval_range_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
-) -> None:
+def test_partial_interval_range_rejected(write_config: WriteConfig, field: str) -> None:
     # Arrange: only one end of the range is set, the other left absent.
-    from travel_deal_agent.config import ROOT
-
-    raw = json.loads((ROOT / "config.json").read_text())
     other = "interval_max_seconds" if field == "interval_min_seconds" else "interval_min_seconds"
-    raw["providers"]["itaka"][field] = 600
-    raw["providers"]["itaka"].pop(other, None)
-    path = tmp_path / "invalid.json"
-    path.write_text(json.dumps(raw))
-    monkeypatch.setenv("TDA_CONFIG", str(path))
-    # Act / Assert
+
+    def set_only_one_end(raw: RawConfig) -> None:
+        raw["providers"]["itaka"][field] = 600
+        del raw["providers"]["itaka"][other]
+
+    write_config(set_only_one_end)
     with pytest.raises(ValueError, match="must be set together"):
         load_settings()
 
@@ -593,36 +579,14 @@ def test_unknown_enabled_provider(settings: Settings, store: Store) -> None:
 @pytest.mark.parametrize(
     "field,value", [("min_nights", 0), ("max_nights", 0), ("max_price", "NaN"), ("people", 0)]
 )
-def test_invalid_config(
-    settings: Settings,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    field: str,
-    value: str | int,
-) -> None:
-    from travel_deal_agent.config import ROOT
-
-    raw = json.loads((ROOT / "config.json").read_text())
-    raw["filters"][field] = value
-    path = tmp_path / "invalid.json"
-    path.write_text(json.dumps(raw))
-    monkeypatch.setenv("TDA_CONFIG", str(path))
+def test_invalid_config(write_config: WriteConfig, field: str, value: str | int) -> None:
+    write_config(lambda raw: raw["filters"].update({field: value}))
     with pytest.raises(ValueError):
         load_settings()
 
 
-def test_invalid_duration_range_rejected(
-    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """min_nights > max_nights must be rejected, even though the production
-    config currently leaves both null (no duration limit)."""
-    from travel_deal_agent.config import ROOT
-
-    raw = json.loads((ROOT / "config.json").read_text())
-    raw["filters"]["min_nights"] = 10
-    raw["filters"]["max_nights"] = 5
-    path = tmp_path / "invalid.json"
-    path.write_text(json.dumps(raw))
-    monkeypatch.setenv("TDA_CONFIG", str(path))
+def test_invalid_duration_range_rejected(write_config: WriteConfig) -> None:
+    """min_nights > max_nights must be rejected."""
+    write_config(lambda raw: raw["filters"].update(min_nights=10, max_nights=5))
     with pytest.raises(ValueError, match="max_nights"):
         load_settings()

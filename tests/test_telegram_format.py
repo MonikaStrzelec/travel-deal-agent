@@ -5,6 +5,8 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
+
 from travel_deal_agent.config import Settings
 from travel_deal_agent.models import Offer
 from travel_deal_agent.notification_content import NotificationMessage
@@ -22,58 +24,39 @@ def _render(store: Store, settings: Settings) -> str:
     )
 
 
-def test_hot_new_offer_header(offer: Offer, store: Store, settings: Settings) -> None:
+@pytest.mark.parametrize(
+    "rating,stars,airport,price,header",
+    [
+        pytest.param(9.2, 4, "WAW", "1000", "🔥 NOWA • Szczególnie ciekawa", id="hot"),
+        pytest.param(9.2, 4, "KTW", "1200", "👍 NOWA • Dobra oferta", id="good"),
+        pytest.param(8.0, 3, "KTW", "1200", "✓ NOWA • Spełnia kryteria", id="match"),
+    ],
+)
+def test_new_offer_header_follows_attractiveness_category(
+    offer: Offer,
+    store: Store,
+    settings: Settings,
+    rating: float,
+    stars: int,
+    airport: str,
+    price: str,
+    header: str,
+) -> None:
     candidate = _at_nights(
         replace(
             offer,
             provider="wakacje.pl",
-            rating=9.2,
-            hotel_stars=4,
-            departure_airport="WAW",
+            rating=rating,
+            hotel_stars=stars,
+            departure_airport=airport,
             board_type="HB",
-            price_per_person=Decimal("1000"),
+            price_per_person=Decimal(price),
         ),
         6,
     )
     store.observe(candidate, True)
 
-    assert _render(store, settings).startswith("🔥 NOWA • Szczególnie ciekawa")
-
-
-def test_good_new_offer_header(offer: Offer, store: Store, settings: Settings) -> None:
-    candidate = _at_nights(
-        replace(
-            offer,
-            provider="wakacje.pl",
-            rating=9.2,
-            hotel_stars=4,
-            departure_airport="KTW",
-            board_type="HB",
-            price_per_person=Decimal("1200"),
-        ),
-        6,
-    )
-    store.observe(candidate, True)
-
-    assert _render(store, settings).startswith("👍 NOWA • Dobra oferta")
-
-
-def test_match_new_offer_header(offer: Offer, store: Store, settings: Settings) -> None:
-    candidate = _at_nights(
-        replace(
-            offer,
-            provider="wakacje.pl",
-            rating=8.0,
-            hotel_stars=3,
-            departure_airport="KTW",
-            board_type="HB",
-            price_per_person=Decimal("1200"),
-        ),
-        6,
-    )
-    store.observe(candidate, True)
-
-    assert _render(store, settings).startswith("✓ NOWA • Spełnia kryteria")
+    assert _render(store, settings).startswith(header)
 
 
 def test_new_low_keeps_the_same_category_header_shape(
@@ -159,15 +142,6 @@ def test_returned_keeps_the_same_category_header_shape(offer: Offer, settings: S
 
     assert message.startswith("↩️ WRÓCIŁA • Szczególnie ciekawa")
     assert "📉" not in message
-
-
-def test_wakacje_incomplete_price_shows_disclaimer(
-    offer: Offer, store: Store, settings: Settings
-) -> None:
-    candidate = replace(offer, provider="wakacje.pl", price_is_complete=False)
-    store.observe(candidate, True)
-
-    assert "ℹ️ Cena z listingu — niepotwierdzona." in _render(store, settings)
 
 
 def test_complete_price_has_no_disclaimer(offer: Offer, store: Store, settings: Settings) -> None:

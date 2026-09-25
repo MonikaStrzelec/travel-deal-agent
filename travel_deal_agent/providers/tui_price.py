@@ -1,26 +1,20 @@
 """Passive TUI real-time price/availability confirmation for one candidate offer.
 
-Confirmed by live reconnaissance (2026-09-22, `data/tui-production/
-realtime-recon-20260922T191702Z/realtime_price_response.json`): TUI's own offer
-detail page passively triggers `.../api/services/tui-search/api/search/offers/
-price?offerCode=...&mode=REALTIME`, which reports `offerStatus` and, when
-`"AVAILABLE"`, a `priceDetails` block. This module never fetches that path
+TUI's own offer detail page passively triggers `.../api/services/tui-search/api/
+search/offers/price?offerCode=...&mode=REALTIME`, which reports `offerStatus` and,
+when `"AVAILABLE"`, a `priceDetails` block. This module never fetches that path
 directly -- `tui_browser.capture_offer_price` only opens the detail page and
 listens for the response the page's own JavaScript triggers.
 
 **`priceGuaranteeFund`: confirmed as TFG+TFP for a charter-flight package tour.**
-The one successful, confirmed response observed so far (Sun City Apartments &
-Hotel, KTW -> Antalya, 2 adults) reported `priceDetails.priceGuaranteeFund: 60`
-alongside `priceGuaranteeFundInfo` citing the Polish package-travel act -- the
-same legal fund pair as ITAKA's TFG/TFP (`itaka_details.py`). Two independent,
-officially confirmed rates (2026-09-2x, project owner, from TUI's own published
-terms and the TFG regulation): for a package tour with **charter** air
-transport, TFG = 15 PLN and TFP = 15 PLN per traveller. For 2 adults that is
-`(15 + 15) * 2 = 60 PLN` -- exactly the observed `priceGuaranteeFund`, which is
-therefore confirmed to be a **per-party total**, not per-person (consistent
-with it sitting in `priceDetails` next to `totalPrice`, unlike every genuinely
-per-person amount in the same payload, which carries an explicit "PerPerson"
-name).
+`priceDetails.priceGuaranteeFund`, alongside `priceGuaranteeFundInfo` citing the
+Polish package-travel act, is the same legal fund pair as ITAKA's TFG/TFP
+(`itaka_details.py`). For a package tour with **charter** air transport, TFG = 15
+PLN and TFP = 15 PLN per traveller, officially confirmed rates from TUI's own
+published terms and the TFG regulation: for 2 adults that is `(15 + 15) * 2 = 60
+PLN`. The fund is a **per-party total**, not per-person (it sits in
+`priceDetails` next to `totalPrice`, unlike every genuinely per-person amount in
+the same payload, which carries an explicit "PerPerson" name).
 
 This rate is confirmed **only for a charter-flight package tour**. Before
 trusting it, `confirm_realtime_price` requires the response to independently,
@@ -31,29 +25,25 @@ structurally confirm that classification -- never inferred from price alone:
 - `offerTravelType == "BYPLANE"` (air transport, not e.g. "own transport").
 
 Even once classified as a charter package, `priceGuaranteeFund` must still
-equal the confirmed rate exactly (`_expected_guarantee_fund`); any disagreement
-(a rate change, or a different fee composition) fails closed with a
-`ValueError` rather than silently trusting whatever number TUI reports. A
-non-charter, or not-yet-classifiable, offer is left unconfirmed
-(`price_is_complete` stays `False`, reason `CHARTER_PACKAGE_NOT_CONFIRMED`) --
-its own mandatory-fee rate has not been confirmed and is not guessed here.
+equal the confirmed rate exactly; any disagreement (a rate change, or a
+different fee composition) fails closed with a `ValueError` rather than
+silently trusting whatever number TUI reports. A non-charter, or
+not-yet-classifiable, offer is left unconfirmed (`price_is_complete` stays
+`False`, reason `CHARTER_PACKAGE_NOT_CONFIRMED`) -- its own mandatory-fee rate
+has not been confirmed and is not guessed here.
 
-**Local mandatory costs: known limitation, not implemented here.** The same
-reconnaissance also found a real local cost (Malta hotel tourist tax, ~1.50
-EUR/day/person, capped ~22.50 EUR/person, paid at the hotel reception) -- the
-same kind of fact the generic `models.LocalMandatoryCost` /
+**Local mandatory costs: known limitation, not implemented here.** Real local
+costs exist on this site (e.g. a Malta hotel tourist tax paid at reception) --
+the same kind of fact the generic `models.LocalMandatoryCost` /
 `itaka_details.local_costs()` mechanism already exists to record. ITAKA's
 extractor works because ITAKA's detail stream carries *structured*
-practical-information objects (`descriptionShort`/`title` fields in the RSC
-stream) to scan. No structured equivalent has been found anywhere in TUI's own
-JSON responses (`offerData`, this `price/REALTIME` response, `alternatives`);
-the Malta tax text was only ever observed in the rendered page's free-form body
-text. Scraping that would mean a fragile, ad hoc HTML/text parser matched
-against arbitrary page copy, which risks silently breaking or silently
-misfiring on unrelated text -- exactly what this project avoids elsewhere. This
-module therefore does not populate `Offer.local_mandatory_costs` for TUI at
-all; it is left as a known limitation until (or unless) a structured source is
-found.
+practical-information objects to scan; no structured equivalent has been found
+anywhere in TUI's own JSON responses, only in the rendered page's free-form
+body text. Scraping that would mean a fragile, ad hoc HTML/text parser matched
+against arbitrary page copy, which risks silently breaking or misfiring on
+unrelated text -- exactly what this project avoids elsewhere. This module
+therefore does not populate `Offer.local_mandatory_costs` for TUI at all; it is
+left as a known limitation until (or unless) a structured source is found.
 """
 
 import json
@@ -64,14 +54,11 @@ from decimal import Decimal
 from pydantic import Field, field_validator
 
 from ..models import Offer, OperatorFee
-from .itaka_data import Boundary, mapping
+from .boundary import Boundary, mapping
 
 MAX_JSON_BYTES = 4_000_000
 
-# Officially confirmed (2026-09-2x, project owner, from TUI's own published terms
-# and the TFG regulation): per-traveller mandatory fund contributions for a
-# package tour with charter air transport. Confirmed only for this transport
-# type; a non-charter rate is not known and not guessed here.
+# Confirmed only for charter air package tours; see the module docstring.
 TFG_PER_TRAVELLER_CHARTER_PLN = Decimal("15")
 TFP_PER_TRAVELLER_CHARTER_PLN = Decimal("15")
 
@@ -165,18 +152,18 @@ def parse_realtime_price(body: str) -> RealtimePriceResponse:
     if len(body) > MAX_JSON_BYTES:
         raise ValueError("TUI REALTIME price response exceeds size limit")
     try:
-        data = json.loads(body)
+        decoded: object = json.loads(body)
     except ValueError as exc:
         raise ValueError("Invalid TUI REALTIME price JSON payload") from exc
-    top = mapping(data)
-    price_details = top.get("priceDetails")
+    payload = mapping(decoded)
+    price_details = payload.get("priceDetails")
     if price_details is not None:
         unknown = set(mapping(price_details)) - _KNOWN_PRICE_DETAIL_FIELDS
         if unknown:
             raise ValueError(
                 f"Unknown TUI priceDetails field(s), possible new mandatory fee: {sorted(unknown)}"
             )
-    return RealtimePriceResponse.model_validate(top)
+    return RealtimePriceResponse.model_validate(payload)
 
 
 def _is_confirmed_charter_air_package(response: RealtimePriceResponse) -> bool:
@@ -205,25 +192,18 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
     existing parsing exceptions and keep the original, unconfirmed offer --
     exactly like `itaka_details.confirm_detail`.
 
-    **`priceDifference` is informational, not a gate.** Confirmed by live
-    reconnaissance (2026-09-25, `data/tui-production/` -- Ramada Resort by
-    Wyndham Side, WAW -> Antalya): a real `AVAILABLE` response reported
-    `priceDifference=-2` while `priceDetails.totalPrice=2892` against a listing
-    total of `2894` (`1447`/person x 2) -- exactly `2892 - 2894 = -2`,
-    confirming this field is the realtime total's delta from the listing
-    snapshot taken earlier, not a signal that the current price is unknown or
-    unusable. `totalPrice`/`totalDiscountPrice` were equal and `factor=1.0`/
-    `discountPercentage=0` (no active promotional discount), ruling out the
-    alternative reading that this field described an in-progress discount
-    rather than a listing/realtime gap. The realtime `totalPrice`/
-    `pricePerPerson` (used below, never the stale listing price) are already
-    the authoritative, current, complete price regardless of this delta, so a
-    nonzero `priceDifference` alone never blocks confirmation -- every other
+    **`priceDifference` is informational, not a gate.** It is the realtime
+    total's delta from the listing snapshot taken earlier, not a signal that
+    the current price is unknown or unusable (distinct from an in-progress
+    promotional discount, which is reflected instead in `factor`/
+    `discountPercentage`). The realtime `totalPrice`/`pricePerPerson` (used
+    below, never the stale listing price) are already the authoritative,
+    current, complete price regardless of this delta, so a nonzero
+    `priceDifference` alone never blocks confirmation -- every other
     fail-closed check (identity, dates, board/room, party size, charter
-    structure, mandatory-fee amount) still applies unchanged and untouched.
+    structure, mandatory-fee amount) still applies unchanged.
     """
     response = parse_realtime_price(body)
-
     if response.offerStatus != "AVAILABLE":
         return replace(
             offer,
@@ -231,7 +211,25 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
                 f"TUI real-time check reported offerStatus={response.offerStatus!r}; not confirmed"
             ),
         )
+    price = _require_price_for_offer(offer, response)
+    _require_trip_matches_offer(offer, response)
+    if not _is_confirmed_charter_air_package(response):
+        return replace(
+            offer,
+            price_verification_reason=(
+                "TUI real-time check confirmed offerStatus=AVAILABLE and reconciled "
+                f"priceDetails.totalPrice={price.totalPrice} {price.currency}, but this offer is "
+                "not structurally confirmed as a charter-flight package tour (tags/"
+                "analyticsData.flight_type/offerTravelType) -- the only confirmed TFG/TFP rate "
+                "applies to charter-flight packages. price_is_complete stays False "
+                "(CHARTER_PACKAGE_NOT_CONFIRMED)."
+            ),
+        )
+    return _confirmed_charter_offer(offer, price)
 
+
+def _require_price_for_offer(offer: Offer, response: RealtimePriceResponse) -> PriceDetails:
+    """The response must price exactly this offer, for 2 adults, in the offer's currency."""
     if response.offerCode != offer.offer_id:
         raise ValueError(
             f"REALTIME offerCode mismatch: expected={offer.offer_id!r}, got={response.offerCode!r}"
@@ -245,7 +243,6 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
         raise ValueError("REALTIME travellerCount is not exactly 2 adults, 0 children")
     if offer.number_of_people != 2:
         raise ValueError("Offer party is not 2 people; TUI real-time confirmation needs 2 adults")
-
     price = response.priceDetails
     if price.currency != offer.currency:
         raise ValueError(
@@ -253,7 +250,11 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
         )
     if price.totalPrice <= 0 or price.pricePerPerson <= 0 or price.priceGuaranteeFund < 0:
         raise ValueError("REALTIME reported a non-positive or invalid price amount")
+    return price
 
+
+def _require_trip_matches_offer(offer: Offer, response: RealtimePriceResponse) -> None:
+    """Airport, hotel, duration and dates, when present, must agree with the listing."""
     if (
         response.outboundFlight is not None
         and offer.departure_airport is not None
@@ -279,22 +280,10 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
     ):
         raise ValueError("REALTIME end date disagrees with the listing offer")
 
-    package_price = price.totalPrice
-    adults = response.travellerCount.adults
 
-    if not _is_confirmed_charter_air_package(response):
-        return replace(
-            offer,
-            price_verification_reason=(
-                "TUI real-time check confirmed offerStatus=AVAILABLE and reconciled "
-                f"priceDetails.totalPrice={package_price} {price.currency}, but this offer is "
-                "not structurally confirmed as a charter-flight package tour (tags/"
-                "analyticsData.flight_type/offerTravelType) -- the only confirmed TFG/TFP rate "
-                "applies to charter-flight packages. price_is_complete stays False "
-                "(CHARTER_PACKAGE_NOT_CONFIRMED)."
-            ),
-        )
-
+def _confirmed_charter_offer(offer: Offer, price: PriceDetails) -> Offer:
+    """Add the confirmed TFG+TFP rate to the realtime package price, fail-closed on the fund."""
+    adults = 2
     expected_fund = (TFG_PER_TRAVELLER_CHARTER_PLN + TFP_PER_TRAVELLER_CHARTER_PLN) * adults
     if price.priceGuaranteeFund != expected_fund:
         raise ValueError(
@@ -302,7 +291,7 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
             f"confirmed charter-package TFG+TFP rate of {expected_fund} {price.currency} for "
             f"{adults} adults; possible rate change or different fee composition"
         )
-
+    package_price = price.totalPrice
     fees = [
         OperatorFee("TFG", TFG_PER_TRAVELLER_CHARTER_PLN * adults, price.currency),
         OperatorFee("TFP", TFP_PER_TRAVELLER_CHARTER_PLN * adults, price.currency),
@@ -314,7 +303,6 @@ def confirm_realtime_price(offer: Offer, body: str) -> Offer:
         if price.priceDifference != 0
         else ""
     )
-
     return replace(
         offer,
         package_price=package_price,

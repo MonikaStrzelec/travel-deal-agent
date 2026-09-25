@@ -91,13 +91,11 @@ def card(index: int = 0, price: int = 1400) -> str:
 
 @pytest.mark.parametrize("minimum,codes", [(3, ["6", "8", "10"]), (4, ["8", "10"]), (5, ["10"])])
 def test_stars_are_separate_source_options(minimum: int, codes: list[str]) -> None:
-    # Arrange / act / assert.
     assert [STAR_CODES[s] for s in star_options(minimum)] == codes
 
 
 @pytest.mark.parametrize("minimum", [2, 3.5, 6])
 def test_unobserved_star_options_fail_at_configuration(minimum: float) -> None:
-    # Arrange / act / assert.
     with pytest.raises(ValueError, match="minimum stars"):
         star_options(minimum)
 
@@ -107,7 +105,6 @@ def test_unobserved_star_options_fail_at_configuration(minimum: float) -> None:
     [("1 500zł/os.", "1500"), ("1\u00a0499,99 zł/os.", "1499.99"), ("999.50zł/os.", "999.50")],
 )
 def test_price_is_decimal_per_person(text: str, expected: str) -> None:
-    # Arrange / act / assert.
     assert parse_price(text) == Decimal(expected)
 
 
@@ -115,7 +112,6 @@ def test_price_is_decimal_per_person(text: str, expected: str) -> None:
     "text", ["1500 EUR", "3000 zł razem", "od 1500zł/os.", "-1zł/os.", "0zł/os.", "1,234,56zł/os."]
 )
 def test_price_ambiguity_is_not_silently_normalized(text: str) -> None:
-    # Arrange / act / assert.
     with pytest.raises(RainbowStructureError):
         parse_price(text)
 
@@ -148,13 +144,10 @@ def test_recorded_card_normalizes_without_inventing_a_variant() -> None:
     "label,board", [("2 posiłki", "HB"), ("3 posiłki", "FB"), ("All inclusive", "AI")]
 )
 def test_unambiguous_meals_and_airport(label: str, board: str) -> None:
-    # Arrange.
     html = HTML.replace(" <span>(+1)</span>", "").replace("2 posiłki", label)
 
-    # Act.
     result = parse_card(html, NOW)
 
-    # Assert.
     assert result.board_type == board
     assert result.departure_airport == "KTW"
 
@@ -165,10 +158,8 @@ def test_optional_fields_can_be_absent() -> None:
     html += '<h3 data-test-id="r-typography:szukaj:tytul-0">Hotel</h3>'
     html += '<span data-test-id="r-typography:szukaj:cena-aktualna-0">900zł/os.</span></div></a>'
 
-    # Act.
     result = parse_card(html, NOW)
 
-    # Assert.
     assert result.country is None and result.rating is None and result.number_of_reviews is None
     assert (
         result.departure_date is None and result.return_date is None and result.hotel_stars is None
@@ -186,84 +177,60 @@ def test_optional_fields_can_be_absent() -> None:
         ("8 dni / 7 noclegów", "0 dni / 7 noclegów"),
         ('href="/turcja', 'href="https://unrelated.invalid/turcja'),
         ("cena-aktualna-0", "changed-price-selector"),
+        # A duplicated field is ambiguous, never resolved by picking one.
+        ("</h3>", '</h3><h3 data-test-id="r-typography:szukaj:tytul-2">Other hotel</h3>'),
     ],
 )
 def test_malformed_present_fields_raise_structure_error(old: str, new: str) -> None:
-    # Arrange / act / assert.
     with pytest.raises(RainbowStructureError):
         parse_card(HTML.replace(old, new), NOW)
 
 
-def test_duplicate_field_is_a_structure_error() -> None:
-    # Arrange.
-    duplicate = '<h3 data-test-id="r-typography:szukaj:tytul-2">Other hotel</h3>'
-
-    # Act / assert.
-    with pytest.raises(RainbowStructureError):
-        parse_card(HTML.replace("</h3>", "</h3>" + duplicate), NOW)
-
-
 def test_listing_identity_survives_price_and_rating_changes_but_not_trip_changes() -> None:
-    # Arrange.
     original = parse_card(HTML, NOW)
 
-    # Act / assert.
     assert parse_card(HTML.replace("1 551", "1 400"), NOW).offer_id == original.offer_id
     assert parse_card(HTML.replace("05.12.2026", "12.12.2026"), NOW).offer_id != original.offer_id
     assert parse_card(HTML.replace("Katowice", "Łódź"), NOW).offer_id != original.offer_id
 
 
 def test_provider_stops_at_offer_limit(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([card(i) for i in range(20)])
 
-    # Act.
     result = provider(settings, listing).fetch()
 
-    # Assert.
     assert len(result) == 10 and listing.reads == list(range(10))
     assert listing.scrolls == 0 and listing.closed
 
 
 def test_duplicates_consume_card_budget(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([card()] * 30)
 
-    # Act.
     result = provider(settings, listing).fetch()
 
-    # Assert.
     assert len(result) == 1 and listing.reads == list(range(15))
 
 
 def test_empty_scan_is_success_and_does_not_scroll(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([])
 
-    # Act / assert.
     assert provider(settings, listing).fetch() == []
     assert listing.reads == [] and listing.scrolls == 0 and listing.closed
 
 
 def test_over_budget_stops_sorted_collection(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([card(0, 1500), card(1, 1501), card(2, 1600)])
 
-    # Act.
     result = provider(settings, listing).fetch()
 
-    # Assert.
     assert len(result) == 1 and listing.reads == [0, 1]
 
 
 def test_scroll_budget_is_independent(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([card(0)], [card(1)])
 
-    # Act.
     result = provider(settings, listing, max_scrolls=1).fetch()
 
-    # Assert.
     assert len(result) == 2 and listing.scrolls == 1
 
 
@@ -273,11 +240,9 @@ def test_scroll_budget_is_independent(settings: Settings) -> None:
 def test_errors_remain_distinguishable_and_close_session(
     settings: Settings, failure: type[RainbowError]
 ) -> None:
-    # Arrange.
     listing = FakeListing([])
     listing.error = failure("Source failure")
 
-    # Act / assert.
     with pytest.raises(failure):
         provider(settings, listing).fetch()
     assert listing.closed
@@ -305,10 +270,8 @@ def test_shared_configuration_and_registry(settings: Settings) -> None:
 
 
 def test_configured_defaults_are_production_not_diagnostic(settings: Settings) -> None:
-    # Arrange / act.
     plan = SearchPlan.from_filters(settings.filters)
 
-    # Assert.
     assert plan.max_price == 1500 and (plan.min_days, plan.max_days) == (7, 9)
     assert plan.rating_floor == 5 and set(plan.boards) == {"HB", "FB", "AI"}
     assert not settings.providers["rainbow"]["enabled"]
@@ -320,7 +283,6 @@ def test_search_plan_supports_unrestricted_duration(settings: Settings) -> None:
     filters["min_nights"] = None
     filters["max_nights"] = None
 
-    # Act.
     plan = SearchPlan.from_filters(filters)
 
     # Assert: Rainbow's own duration radio is left untouched (its default query
@@ -334,7 +296,6 @@ def test_search_plan_rejects_partial_duration_bounds(settings: Settings) -> None
     filters["min_nights"] = 6
     filters["max_nights"] = None
 
-    # Act / assert.
     with pytest.raises(ValueError, match="both min_nights and max_nights"):
         SearchPlan.from_filters(filters)
 
@@ -346,50 +307,38 @@ def test_search_plan_uses_only_confirmed_meal_options(settings: Settings) -> Non
     filters = deepcopy(settings.filters)
     filters["allowed_boards"] = ["HB", "FB", "AI", "ZO"]
 
-    # Act.
     plan = SearchPlan.from_filters(filters)
 
-    # Assert.
     assert set(plan.boards) == {"HB", "FB", "AI"}
 
 
 def test_search_plan_rejects_meal_options_with_no_rainbow_support(settings: Settings) -> None:
-    # Arrange.
     filters = deepcopy(settings.filters)
     filters["allowed_boards"] = ["UAI"]
 
-    # Act / assert.
     with pytest.raises(ValueError, match="Unsupported Rainbow meal option"):
         SearchPlan.from_filters(filters)
 
 
 def test_missing_review_count_is_optional() -> None:
-    # Arrange.
     html = HTML.replace(", 44 opinie", "").replace("<span>(44 opinie)</span>", "")
 
-    # Act.
     result = parse_card(html, NOW)
 
-    # Assert.
     assert result.rating == 5.3 and result.number_of_reviews is None
 
 
 def test_no_progress_scroll_stops_without_retry(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([card()])
 
-    # Act.
     result = provider(settings, listing, max_scrolls=4).fetch()
 
-    # Assert.
     assert len(result) == 1 and listing.scrolls == 1
 
 
 def test_descending_cards_are_not_silently_accepted(settings: Settings) -> None:
-    # Arrange.
     listing = FakeListing([card(0, 1400), card(1, 1300)])
 
-    # Act / assert.
     with pytest.raises(RainbowStructureError, match="ascending"):
         provider(settings, listing).fetch()
 
@@ -418,7 +367,6 @@ def test_scan_deadline_after_progress_keeps_already_collected_offers(settings: S
 def test_invalid_collection_limits_fail_early(
     max_offers: int, max_cards: int, scrolls: int
 ) -> None:
-    # Arrange / act / assert.
     with pytest.raises(ValueError):
         Limits.from_config(
             {
@@ -436,10 +384,8 @@ def test_invalid_collection_limits_fail_early(
     [("Łódź", "LCJ"), ("Warszawa Chopin", "WAW"), ("Warszawa Modlin", "WMI"), ("Wrocław", "WRO")],
 )
 def test_all_configured_airport_labels_are_normalized(airport: str, expected: str) -> None:
-    # Arrange.
     html = HTML.replace("Katowice <span>(+1)</span>", airport)
 
-    # Act / assert.
     assert parse_card(html, NOW).departure_airport == expected
 
 
@@ -502,7 +448,6 @@ def test_pipeline_persists_unverified_quotes_without_alerts(
 
 
 def test_empty_scan_resets_backoff_and_schedules_normally(settings: Settings, store: Store) -> None:
-    # Arrange.
     cfg: ProviderConfig = {"enabled": True, "interval_seconds": 100}
     selected = replace(settings, providers={"rainbow": cfg})
     listing = FakeListing([])
@@ -511,10 +456,8 @@ def test_empty_scan_resets_backoff_and_schedules_normally(settings: Settings, st
         selected, [provider(settings, listing)], store, ConsoleNotifier(), clock=lambda: 1000
     )
 
-    # Act.
     assert scheduler.run_once() == []
 
-    # Assert.
     assert store.run_state("rainbow") == {"next_run": 1100, "failures": 0}
     assert store.pending() == []
 

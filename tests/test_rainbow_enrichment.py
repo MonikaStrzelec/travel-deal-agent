@@ -76,20 +76,16 @@ def variant(**overrides: object) -> RainbowSelectedVariant:
 
 
 def test_potential_candidate_requires_core_fields(settings: Settings) -> None:
-    # Arrange.
     incomplete = replace(base_offer(), hotel_stars=None)
 
-    # Act / assert.
     assert not potential_candidate(incomplete, settings.filters, TODAY)
 
 
 def test_potential_candidate_rejects_price_above_cap(settings: Settings) -> None:
-    # Arrange.
     offer = replace(
         base_offer(), price_per_person=Decimal("1500.01"), total_price=Decimal("3000.02")
     )
 
-    # Act / assert.
     assert not potential_candidate(offer, settings.filters, TODAY)
 
 
@@ -98,7 +94,6 @@ def test_potential_candidate_true_for_a_single_known_option(settings: Settings) 
     offer = base_offer()
     assert offer.departure_airport == "KTW" and offer.board_type == "HB"
 
-    # Act / assert.
     assert potential_candidate(offer, settings.filters, TODAY)
 
 
@@ -113,11 +108,9 @@ def test_potential_candidate_uses_any_option_not_a_combination(settings: Setting
 
 
 def test_potential_candidate_false_when_no_option_qualifies(settings: Settings) -> None:
-    # Arrange.
     offer = replace(base_offer(), departure_airport=None, board_type=None)
     unsupported = evidence(airports=("KRK",), boards=("BB", "AI"))
 
-    # Act / assert.
     assert not potential_candidate(offer, settings.filters, TODAY, unsupported)
 
 
@@ -147,15 +140,12 @@ def test_enrich_selected_narrows_to_the_confirmed_configuration(settings: Settin
 def test_enrich_selected_is_deterministic_and_stable_for_the_same_variant(
     settings: Settings,
 ) -> None:
-    # Arrange.
     offer = matching_offer()
     e = evidence()
 
-    # Act.
     first = enrich_selected(offer, e, variant())
     second = enrich_selected(offer, e, variant())
 
-    # Assert.
     assert first.variant_identity == second.variant_identity
 
 
@@ -165,7 +155,6 @@ def test_enrich_selected_rejects_price_mismatch_with_listing(settings: Settings)
     e = evidence()
     mismatched = variant(price_per_person=Decimal("1602"), total_price=Decimal("3204"))
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError):
         enrich_selected(offer, e, mismatched)
 
@@ -176,7 +165,6 @@ def test_enrich_selected_rejects_airport_outside_evidence_options(settings: Sett
     e = evidence(airports=("WAW",))  # KTW no longer a listed option
     v = variant()
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError):
         enrich_selected(offer, e, v)
 
@@ -187,6 +175,5 @@ def test_enrich_selected_rejects_conflicting_card_airport(settings: Settings) ->
     e = evidence()
     v = variant()
 
-    # Act / assert.
     with pytest.raises(RainbowDetailError):
         enrich_selected(offer, e, v)

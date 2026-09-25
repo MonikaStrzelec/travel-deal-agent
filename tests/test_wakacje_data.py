@@ -131,58 +131,38 @@ def wrap(offers: list[dict[str, Any]], *, count: int = 1) -> str:
 
 
 def test_decode_next_data_returns_the_json_object() -> None:
-    # Act
     data = decode_next_data(FIXTURE_HTML)
-    # Assert
     assert "props" in data
     offers = extract_offers(data)
     assert len(offers) == 2
     assert offers[0]["id"] == 211281
 
 
-def test_missing_next_data_script_is_rejected() -> None:
-    # Arrange
-    html = "<html><body>no next data here</body></html>"
-    # Act / Assert
-    with pytest.raises(ValueError, match="Missing or ambiguous"):
+@pytest.mark.parametrize(
+    "html,match",
+    [
+        pytest.param(
+            "<html><body>no next data here</body></html>", "Missing or ambiguous", id="missing"
+        ),
+        pytest.param(wrap([offer()]) * 2, "Missing or ambiguous", id="ambiguous_duplicate"),
+        pytest.param(
+            '<script id="__NEXT_DATA__" type="application/json"></script>', "Empty", id="empty"
+        ),
+        pytest.param(
+            '<script id="__NEXT_DATA__" type="application/json">not json</script>',
+            "JSON",
+            id="invalid_json",
+        ),
+        pytest.param("x" * 4_000_001, "size limit", id="oversized"),
+    ],
+)
+def test_malformed_next_data_is_rejected(html: str, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
         decode_next_data(html)
-
-
-def test_ambiguous_duplicate_next_data_script_is_rejected() -> None:
-    # Arrange
-    fragment = wrap([offer()])
-    html = fragment + fragment
-    # Act / Assert
-    with pytest.raises(ValueError, match="Missing or ambiguous"):
-        decode_next_data(html)
-
-
-def test_empty_next_data_script_is_rejected() -> None:
-    # Arrange
-    html = '<script id="__NEXT_DATA__" type="application/json"></script>'
-    # Act / Assert
-    with pytest.raises(ValueError, match="Empty"):
-        decode_next_data(html)
-
-
-def test_invalid_json_is_rejected() -> None:
-    # Arrange
-    html = '<script id="__NEXT_DATA__" type="application/json">not json</script>'
-    # Act / Assert
-    with pytest.raises(ValueError, match="JSON"):
-        decode_next_data(html)
-
-
-def test_oversized_html_is_rejected() -> None:
-    # Act / Assert
-    with pytest.raises(ValueError, match="size limit"):
-        decode_next_data("x" * 4_000_001)
 
 
 def test_missing_dehydrated_queries_is_rejected() -> None:
-    # Arrange
     html = '<script id="__NEXT_DATA__" type="application/json">{"props": {}}</script>'
-    # Act / Assert
     with pytest.raises(ValueError, match="dehydratedState"):
         extract_offers(decode_next_data(html))
 
@@ -195,7 +175,6 @@ def test_missing_listing_offers_query_is_rejected() -> None:
         '[{"queryKey": ["header-content"], "state": {"data": {}}}]}}}'
         "</script>"
     )
-    # Act / Assert
     with pytest.raises(ValueError, match="Missing or ambiguous"):
         extract_offers(decode_next_data(html))
 
@@ -212,20 +191,17 @@ def test_ambiguous_multiple_listing_offers_queries_is_rejected() -> None:
         + json.dumps(data, ensure_ascii=False)
         + "</script>"
     )
-    # Act / Assert
     with pytest.raises(ValueError, match="Missing or ambiguous"):
         extract_offers(decode_next_data(html))
 
 
 def test_missing_offers_list_is_rejected() -> None:
-    # Arrange
     html = (
         '<script id="__NEXT_DATA__" type="application/json">'
         '{"props": {"dehydratedState": {"queries": [{"queryKey": ["listingOffers", "x"], '
         '"state": {"data": {"offers": {}}}}]}}}'
         "</script>"
     )
-    # Act / Assert
     with pytest.raises(ValueError, match="Missing Wakacje.pl offers list"):
         extract_offers(decode_next_data(html))
 
@@ -260,9 +236,7 @@ def test_one_valid_offer_normalizes_fully() -> None:
 
 
 def test_parse_listing_end_to_end_matches_normalize_offer() -> None:
-    # Act
     result = parse_listing(FIXTURE_HTML, NOW)
-    # Assert
     assert len(result) == 2
     assert result[0] == normalize_offer(BASE_OFFER, NOW)
 
@@ -299,9 +273,7 @@ def test_confirmed_country_slugs_map_to_iso_codes(slug: str, expected_iso: str) 
             "city": geo("Didim", "didim"),
         }
     )
-    # Act
     result = normalize_offer(candidate, NOW)
-    # Assert
     assert result.country == expected_iso
 
 
@@ -320,29 +292,17 @@ def test_country_outside_the_mapping_is_not_rejected(
     # Arrange: an otherwise good offer from a country COUNTRIES does not map.
     candidate = copy.deepcopy(ALION_OFFER)
     candidate["place"]["country"] = geo(name, slug)
-    # Act
     result = normalize_offer(candidate, NOW)
-    # Assert
     assert result.country is None
     assert result.destination is not None and result.destination.startswith(f"{name} / ")
     assert matches(result, settings.filters, date(2026, 9, 22))
-
-
-def test_mapped_country_destination_is_unchanged() -> None:
-    # Act
-    result = normalize_offer(ALION_OFFER, NOW)
-    # Assert: a known code already names the country, so it is not repeated.
-    assert result.country == "AL"
-    assert result.destination == "Riwiera Albańska / Durrës"
 
 
 # --- price / Decimal / total-vs-per-person ------------------------------------------
 
 
 def test_price_is_decimal_type() -> None:
-    # Act
     result = normalize_offer(offer(), NOW)
-    # Assert
     assert isinstance(result.price_per_person, Decimal)
     assert isinstance(result.total_price, Decimal)
 
@@ -352,14 +312,11 @@ def test_price_is_per_person_not_a_total() -> None:
     # query includes `za-osobe` ("average per person"), so `price` is now
     # confirmed to be the per-person figure directly, the reverse of the site's
     # plain default the parser originally assumed (sec 8a.1).
-    # Act
     result = normalize_offer(offer(price=5559), NOW)
-    # Assert
     assert result.price_per_person == Decimal("5559")
 
 
 def test_total_price_is_price_per_person_times_party_size() -> None:
-    # Act
     result = normalize_offer(offer(price=5559), NOW)
     # Assert: every fetch uses the site's own unmodified 2-adult default (sec 3, 5, 12.1).
     assert result.total_price == Decimal("5559") * Decimal(2)
@@ -368,7 +325,6 @@ def test_total_price_is_price_per_person_times_party_size() -> None:
 
 @pytest.mark.parametrize("bad", [-1])
 def test_negative_price_is_rejected(bad: int) -> None:
-    # Act / Assert
     with pytest.raises(ValidationError):
         normalize_offer(offer(price=bad), NOW)
 
@@ -376,9 +332,7 @@ def test_negative_price_is_rejected(bad: int) -> None:
 def test_price_is_complete_always_false() -> None:
     # Arrange: RECONNAISSANCE.md sec 12.2/12.4 -- no robots-compliant HTTP path to a
     # booking total currently exists for Wakacje.pl.
-    # Act
     result = normalize_offer(offer(), NOW)
-    # Assert
     assert result.price_is_complete is False
 
 
@@ -387,24 +341,19 @@ def test_price_is_complete_always_false() -> None:
 
 @pytest.mark.parametrize("stars", [0, 1, 3, 4, 5])
 def test_hotel_stars_within_scale(stars: int) -> None:
-    # Act
     result = normalize_offer(offer(category=stars), NOW)
-    # Assert
     assert result.hotel_stars == float(stars)
 
 
 @pytest.mark.parametrize("stars", [-1, 6])
 def test_hotel_stars_outside_scale_is_rejected(stars: int) -> None:
-    # Act / Assert
     with pytest.raises(ValidationError):
         normalize_offer(offer(category=stars), NOW)
 
 
 def test_hotel_stars_accepts_a_genuine_half_star_float() -> None:
     # Arrange: RECONNAISSANCE.md sec 4/11 confirmed `category` as float, e.g. 4.5.
-    # Act
     result = normalize_offer(offer(category=4.5), NOW)
-    # Assert
     assert result.hotel_stars == 4.5
     assert isinstance(result.hotel_stars, float)
 
@@ -413,16 +362,13 @@ def test_hotel_stars_accepts_a_genuine_half_star_float() -> None:
 
 
 def test_rating_is_kept_on_its_native_zero_to_ten_scale() -> None:
-    # Act
     result = normalize_offer(offer(ratingValue=8.7), NOW)
-    # Assert
     assert result.rating == 8.7
     assert result.provider_rating_max == 10.0
 
 
 @pytest.mark.parametrize("rating", [-0.1, 10.1])
 def test_out_of_scale_rating_is_dropped_not_rejected(rating: float) -> None:
-    # Act
     result = normalize_offer(offer(ratingValue=rating), NOW)
     # Assert: an implausible rating does not invalidate the rest of the offer.
     assert result.rating is None
@@ -430,32 +376,25 @@ def test_out_of_scale_rating_is_dropped_not_rejected(rating: float) -> None:
 
 
 def test_missing_rating_is_none() -> None:
-    # Act
     result = normalize_offer(offer(ratingValue=None), NOW)
-    # Assert
     assert result.rating is None
 
 
 def test_rating_reservation_count_is_never_mapped_to_number_of_reviews() -> None:
     # Arrange: RECONNAISSANCE.md sec 8b.1 -- semantics (bookings vs. reviews) are not
     # literally confirmed; never guessed into a specific meaning.
-    # Act
     result = normalize_offer(offer(ratingReservationCount=336), NOW)
-    # Assert
     assert result.number_of_reviews is None
     # The raw value is preserved diagnostically in price_notes, not silently dropped.
     assert "336" in (result.price_notes or "")
 
 
 def test_missing_rating_reservation_count_still_normalizes() -> None:
-    # Act
     result = normalize_offer(offer(ratingReservationCount=None), NOW)
-    # Assert
     assert result.number_of_reviews is None
 
 
 def test_negative_rating_reservation_count_is_rejected() -> None:
-    # Act / Assert
     with pytest.raises(ValidationError):
         normalize_offer(offer(ratingReservationCount=-1), NOW)
 
@@ -470,47 +409,27 @@ def test_negative_rating_reservation_count_is_rejected() -> None:
         (1, "Ultra All Inclusive", "AI"),
         (2, "Śniadania i obiadokolacje (HB)", "HB"),
         (3, "Śniadania (BB)", "BB"),
+        (4, "Własne", "RO"),
+        # Code 5 ("Według programu") is a deliberate business decision to accept
+        # ZO as a normal canonical board (boards.CANONICAL_BOARDS), ranked below
+        # HB/FB/AI -- see boards.BOARD_ORDER.
         (5, "Według programu", "ZO"),
         (6, "Trzy posiłki (FB)", "FB"),
+        # An unrecognized code is unknown, never guessed.
+        (99, "Nowa opcja", None),
     ],
 )
-def test_confirmed_service_codes_map_to_the_bucket(service: int, desc: str, expected: str) -> None:
+def test_confirmed_service_codes_map_to_the_bucket(
+    service: int, desc: str, expected: str | None
+) -> None:
     # Arrange: RECONNAISSANCE.md sec 8a.2/11.3 -- the numeric code is the reliable
     # bucket; "Ultra All Inclusive" and "All Inclusive" are BOTH code 1 -> AI.
-    # Act
     result = normalize_offer(offer(service=service, serviceDesc=desc), NOW)
-    # Assert
     assert result.board_type == expected
 
 
-def test_own_catering_code_maps_to_room_only() -> None:
-    # Act
-    result = normalize_offer(offer(service=4, serviceDesc="Własne"), NOW)
-    # Assert
-    assert result.board_type == "RO"
-
-
-def test_itinerary_based_board_code_maps_to_zo() -> None:
-    # Arrange: code 5 ("Według programu") is a deliberate business decision to
-    # accept ZO as a normal canonical board (boards.CANONICAL_BOARDS), ranked
-    # below HB/FB/AI -- see boards.BOARD_ORDER.
-    # Act
-    result = normalize_offer(offer(service=5, serviceDesc="Według programu"), NOW)
-    # Assert
-    assert result.board_type == "ZO"
-
-
-def test_unrecognized_service_code_is_unknown_not_guessed() -> None:
-    # Act
-    result = normalize_offer(offer(service=99, serviceDesc="Nowa opcja"), NOW)
-    # Assert
-    assert result.board_type is None
-
-
 def test_service_description_text_is_kept_diagnostically() -> None:
-    # Act
     result = normalize_offer(offer(serviceDesc="Ultra All Inclusive"), NOW)
-    # Assert
     assert "Ultra All Inclusive" in (result.price_notes or "")
 
 
@@ -518,14 +437,11 @@ def test_service_description_text_is_kept_diagnostically() -> None:
 
 
 def test_departure_airport_is_the_source_code_directly() -> None:
-    # Act
     result = normalize_offer(offer(departurePlace="Wrocław", departurePlaceCode="WRO"), NOW)
-    # Assert
     assert result.departure_airport == "WRO"
 
 
 def test_unrecognized_departure_airport_code_is_rejected() -> None:
-    # Act / Assert
     with pytest.raises(ValueError, match="Unrecognized Wakacje.pl departure"):
         normalize_offer(offer(departurePlaceCode="12"), NOW)
 
@@ -533,15 +449,12 @@ def test_unrecognized_departure_airport_code_is_rejected() -> None:
 def test_requested_departure_airport_must_match_every_returned_offer() -> None:
     # Arrange: RECONNAISSANCE.md sec 12.1 -- every offer on a `?z-wroclawia` fetch was
     # confirmed to have departurePlaceCode == "WRO"; a mismatch must fail loudly.
-    # Act / Assert
     with pytest.raises(ValueError, match="unexpected departure airport"):
         normalize_offer(offer(), NOW, requested_departure_airport="WRO")
 
 
 def test_requested_departure_airport_matching_is_accepted() -> None:
-    # Act
     result = normalize_offer(WRO_OFFER, NOW, requested_departure_airport="WRO")
-    # Assert
     assert result.departure_airport == "WRO"
 
 
@@ -564,7 +477,6 @@ def test_departure_places_never_create_additional_offers() -> None:
             "Warszawa",
         ]
     )
-    # Act
     result = parse_listing(wrap([many_places]), NOW)
     # Assert: exactly one Offer, priced only for the one departurePlace shown.
     assert len(result) == 1
@@ -572,7 +484,6 @@ def test_departure_places_never_create_additional_offers() -> None:
 
 
 def test_departure_places_shape_is_validated_but_not_projected() -> None:
-    # Act
     raw = RawOffer.model_validate(offer())
     # Assert: parsed for shape validation only.
     assert len(raw.departurePlaces) == 7
@@ -585,18 +496,14 @@ def test_departure_places_shape_is_validated_but_not_projected() -> None:
 
 
 def test_variant_identity_is_stable_for_identical_input() -> None:
-    # Act
     a = normalize_offer(offer(), NOW)
     b = normalize_offer(offer(), NOW)
-    # Assert
     assert a.offer_id == b.offer_id
     assert a.variant_identity == a.offer_id
 
 
 def test_numeric_id_alone_is_not_used_as_offer_id() -> None:
-    # Act
     result = normalize_offer(offer(), NOW)
-    # Assert
     assert result.offer_id != "211281"
     assert str(offer()["id"]) not in result.offer_id
 
@@ -604,36 +511,28 @@ def test_numeric_id_alone_is_not_used_as_offer_id() -> None:
 def test_same_id_different_airport_and_date_yields_a_different_variant_id() -> None:
     # Arrange: the real confirmed pair from RECONNAISSANCE.md sec 12.1 -- same
     # numeric id (211281), different departure airport, date and price.
-    # Act
     unfiltered = normalize_offer(BASE_OFFER, NOW)
     filtered = normalize_offer(WRO_OFFER, NOW, requested_departure_airport="WRO")
-    # Assert
     assert BASE_OFFER["id"] == WRO_OFFER["id"] == 211281
     assert unfiltered.offer_id != filtered.offer_id
     assert unfiltered.variant_identity != filtered.variant_identity
 
 
 def test_same_id_same_context_yields_the_same_variant_id() -> None:
-    # Act
     first = variant_identity(RawOffer.model_validate(offer()), date(2026, 10, 13))
     second = variant_identity(RawOffer.model_validate(offer()), date(2026, 10, 13))
-    # Assert
     assert first == second
 
 
 def test_variant_id_changes_when_board_changes() -> None:
-    # Act
     ai = normalize_offer(offer(service=1, serviceDesc="All Inclusive"), NOW)
     fb = normalize_offer(offer(service=6, serviceDesc="Trzy posiłki"), NOW)
-    # Assert
     assert ai.offer_id != fb.offer_id
 
 
 def test_variant_id_changes_when_duration_changes() -> None:
-    # Act
     seven = normalize_offer(offer(duration=7, returnDate="2026-10-20"), NOW)
     eight = normalize_offer(offer(duration=8, returnDate="2026-10-21"), NOW)
-    # Assert
     assert seven.offer_id != eight.offer_id
 
 
@@ -641,28 +540,23 @@ def test_variant_id_changes_when_duration_changes() -> None:
 
 
 def test_duration_consistent_with_dates() -> None:
-    # Act
     result = normalize_offer(offer(), NOW)
-    # Assert
     assert result.number_of_days == 7
     assert (result.return_date - result.departure_date).days == 7  # type: ignore[operator]
 
 
 def test_duration_disagreeing_with_dates_is_rejected() -> None:
-    # Act / Assert
     with pytest.raises(ValueError, match="duration disagrees"):
         normalize_offer(offer(duration=6), NOW)
 
 
 def test_return_before_departure_is_rejected() -> None:
-    # Act / Assert
     with pytest.raises(ValueError, match="return date"):
         normalize_offer(offer(departureDate="2026-10-20", returnDate="2026-10-13", duration=7), NOW)
 
 
 @pytest.mark.parametrize("bad", ["13.10.2026", "2026/10/13", "not-a-date", ""])
 def test_malformed_dates_are_rejected(bad: str) -> None:
-    # Act / Assert
     with pytest.raises(ValueError):
         normalize_offer(offer(departureDate=bad), NOW)
 
@@ -671,7 +565,6 @@ def test_malformed_dates_are_rejected(bad: str) -> None:
 
 
 def test_offer_url_matches_the_confirmed_pattern() -> None:
-    # Act
     result = normalize_offer(offer(), NOW)
     # Assert: RECONNAISSANCE.md sec 6/11 confirmed pattern, from JSON-LD, not guessed.
     assert result.url == (
@@ -681,10 +574,8 @@ def test_offer_url_matches_the_confirmed_pattern() -> None:
 
 
 def test_unsafe_slug_characters_leave_url_unset_not_the_whole_offer() -> None:
-    # Arrange
     unsafe = offer()
     unsafe["place"]["city"]["slug"] = "didim/../evil"
-    # Act
     result = normalize_offer(unsafe, NOW)
     # Assert: the rest of the offer is still usable.
     assert result.url is None
@@ -709,43 +600,54 @@ REAL_HREF = (
 
 
 def test_real_listing_href_is_extracted_keyed_by_offer_id() -> None:
-    # Arrange
     html = wrap([offer()]) + (
         f'<a data-test-offer-id="211281" href="{REAL_HREF}">Laur Experience</a>'
     )
-    # Act
     links = extract_offer_links(html)
     # Assert: the query string survives extraction unchanged.
     assert links == {211281: REAL_HREF}
 
 
 def test_parse_listing_prefers_the_real_href_over_the_reconstructed_url() -> None:
-    # Arrange
     html = wrap([offer()]) + (
         f'<a data-test-offer-id="211281" href="{REAL_HREF}">Laur Experience</a>'
     )
-    # Act
     result = parse_listing(html, NOW)
     # Assert: exact variant href passes through untouched, not the bare hotel URL.
     assert len(result) == 1
     assert result[0].url == REAL_HREF
 
 
-def test_normalize_offer_falls_back_to_reconstructed_url_without_a_real_href() -> None:
-    # Act: no `offer_links` given, same as every other test in this module.
-    result = normalize_offer(offer(), NOW)
-    # Assert: unchanged behavior when no real href is available.
-    assert result.url == (
-        "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
-        "laur-experience-elegance-211281.html"
-    )
-
-
-def test_real_href_for_a_different_offer_id_is_not_applied() -> None:
-    # Arrange: a href on the page for some other offer must never leak onto this one.
-    other_href = REAL_HREF.replace("211281", "999999")
-    # Act
-    result = normalize_offer(offer(), NOW, offer_links={999999: other_href})
+@pytest.mark.parametrize(
+    "offer_links",
+    [
+        # No `offer_links` given, same as every other test in this module.
+        pytest.param(None, id="no_real_href"),
+        # A href on the page for some other offer must never leak onto this one.
+        pytest.param({999999: REAL_HREF.replace("211281", "999999")}, id="different_offer_id"),
+        # Same id, but pointing off-site -- must never be trusted verbatim.
+        pytest.param(
+            {211281: "https://evil.example/oferty/x-211281.html?od-2026-10-13"},
+            id="off_origin_href",
+        ),
+        # Same id and origin, but whitespace could split or inject text into the
+        # link a notifier renders -- never trusted verbatim.
+        pytest.param({211281: REAL_HREF + " extra"}, id="whitespace_in_href"),
+        # This offer's id appears only in the query string; the path names some
+        # other offer, so the href does not identify this card.
+        pytest.param(
+            {
+                211281: "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
+                "other-hotel-999999.html?ref=x-211281.html"
+            },
+            id="offer_id_only_in_query",
+        ),
+    ],
+)
+def test_normalize_offer_falls_back_to_reconstructed_url_without_a_trusted_href(
+    offer_links: dict[int, str] | None,
+) -> None:
+    result = normalize_offer(offer(), NOW, offer_links=offer_links)
     # Assert: falls back to the reconstructed URL, exactly as if no href existed.
     assert result.url == (
         "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
@@ -753,20 +655,7 @@ def test_real_href_for_a_different_offer_id_is_not_applied() -> None:
     )
 
 
-def test_off_origin_href_is_rejected_not_trusted() -> None:
-    # Arrange: same id, but pointing off-site -- must never be trusted verbatim.
-    evil_href = "https://evil.example/oferty/x-211281.html?od-2026-10-13"
-    # Act
-    result = normalize_offer(offer(), NOW, offer_links={211281: evil_href})
-    # Assert
-    assert result.url == (
-        "https://www.wakacje.pl/oferty/turcja/wybrzeze-egejskie/didim/"
-        "laur-experience-elegance-211281.html"
-    )
-
-
 def test_variant_identity_is_unaffected_by_the_real_href() -> None:
-    # Act
     without_href = normalize_offer(offer(), NOW)
     with_href = normalize_offer(offer(), NOW, offer_links={211281: REAL_HREF})
     # Assert: the href only changes `url`, never the price-history/dedup identity.
@@ -779,7 +668,6 @@ def test_preluna_scenario_duration_renders_8_days_7_nights() -> None:
     "8 dni / 7 nocy" (7 nights, 8 calendar days) -- confirming the duration
     calculation itself was never the bug; only the URL was.
     """
-    # Arrange
     from travel_deal_agent.notification_content import _stay_length
 
     preluna = offer(
@@ -800,9 +688,7 @@ def test_preluna_scenario_duration_renders_8_days_7_nights() -> None:
         service=2,
         serviceDesc="HB",
     )
-    # Act
     result = normalize_offer(preluna, NOW)
-    # Assert
     assert (result.return_date - result.departure_date).days == 7  # type: ignore[operator]
     assert _stay_length(result) == "8 dni / 7 nocy"
 
@@ -830,39 +716,30 @@ def test_preluna_scenario_duration_renders_8_days_7_nights() -> None:
     ],
 )
 def test_missing_required_field_is_rejected(field: str) -> None:
-    # Arrange
     broken = offer()
     del broken[field]
-    # Act / Assert
     with pytest.raises(ValidationError):
         normalize_offer(broken, NOW)
 
 
 def test_one_malformed_record_does_not_fail_the_whole_page() -> None:
-    # Arrange
     broken = offer(id=999999)
     del broken["name"]
     html = wrap([offer(), broken])
-    # Act
     result = parse_listing(html, NOW)
-    # Assert
     assert len(result) == 1
 
 
 def test_all_malformed_records_raise_a_schema_change_error() -> None:
-    # Arrange
     broken = offer()
     del broken["name"]
     html = wrap([broken])
-    # Act / Assert
     with pytest.raises(ValueError, match="No readable"):
         parse_listing(html, NOW)
 
 
 def test_empty_offers_list_is_not_an_error() -> None:
-    # Act
     result = parse_listing(wrap([]), NOW)
-    # Assert
     assert result == []
 
 
@@ -934,7 +811,6 @@ def test_final_filtering_accepts_a_wakacje_offer_via_the_incomplete_price_whitel
         ratingValue=9,
     )
     result = normalize_offer(cheap, NOW)
-    # Act / Assert
     assert result.price_per_person == Decimal("1400")
     assert not result.price_is_complete
     assert "wakacje.pl" in settings.filters.get("accept_incomplete_price_from", [])
@@ -961,7 +837,6 @@ def test_final_filtering_still_blocks_a_wakacje_offer_without_the_whitelist_entr
         ratingValue=9,
     )
     result = normalize_offer(cheap, NOW)
-    # Act / Assert
     assert not matches(result, settings.filters, date(2026, 9, 22))
 
 
@@ -1026,7 +901,6 @@ def test_real_alion_scenario_normalizes_as_observed() -> None:
 
 
 def test_real_alion_scenario_passes_matches_end_to_end(settings: Settings) -> None:
-    # Arrange
     result = normalize_offer(ALION_OFFER, NOW)
     # Act / Assert: every configured hard filter, evaluated as of the date this
     # offer was actually observed.
@@ -1036,9 +910,7 @@ def test_real_alion_scenario_passes_matches_end_to_end(settings: Settings) -> No
 def test_three_star_offer_from_a_former_four_star_country_passes(settings: Settings) -> None:
     # Arrange: Albania previously required 4 stars; now 3 stars suffice everywhere.
     candidate = {**ALION_OFFER, "category": 3}
-    # Act
     result = normalize_offer(candidate, NOW)
-    # Assert
     assert result.country == "AL"
     assert matches(result, settings.filters, date(2026, 9, 22))
 
@@ -1059,7 +931,5 @@ def test_one_internal_rating_threshold_regardless_of_price(
     # Arrange: `price` is per-person directly (za-osobe, sec 25) -- 999 and 1479
     # PLN per person -- the old bands used 7.0 below 1000.
     candidate = {**ALION_OFFER, "price": price, "ratingValue": rating, "service": 1}
-    # Act
     result = normalize_offer(candidate, NOW)
-    # Assert
     assert matches(result, settings.filters, date(2026, 9, 22)) is expected

@@ -1,177 +1,376 @@
-﻿# Travel Deal Agent
+# Travel Deal Agent
 
-A local Python application for finding travel deals that match a configurable budget,
-trip length, departure airport and hotel-quality criteria. It remembers prices and
-avoids repeating alerts for the same trip.
+A small, local Python application that watches Polish tour-operator websites for package
+holidays matching a configurable budget, departure airport and hotel-quality policy. It
+keeps a price history in SQLite, classifies how attractive each matching offer is, and
+sends one compact Telegram message per meaningful event -- a new offer, a price drop, a
+new historical low or an offer that came back -- instead of repeating the same deal.
 
-**Status:** three providers are enabled and live in the committed `config.json` -- ITAKA (booking-price checks via its public detail response, HTTP-only), Wakacje.pl (listing provider, HTTP-only) and TUI (listing + real-time price confirmation, via passive Playwright observation of its own site) -- plus a Rainbow browser listing provider that is **blocked by source policy** (`r.pl/robots.txt` disallows the `/szukaj` search path the production flow needs) and stays disabled and CLI-rejected under `--watch`. Unverified variants remain diagnostic. Google is not connected; no paid API is used. Alerts are delivered through the official Telegram Bot API by default, falling back to local console logging when Telegram credentials are not configured. The repository includes a CI workflow but does not require GitHub to run.
+It is designed to run unattended on a single Windows computer (Windows Task Scheduler,
+no console window), without cloud infrastructure, paid APIs or a web framework.
 
-## Problem and approach
+## Key features
 
-Travel offers differ in price presentation, hotel-rating scales and trip details.
-Manual comparison is repetitive, and repeatedly checking the same deal can generate
-noisy notifications. This project separates source adapters from eligibility rules,
-ranking, scheduling and persistence so each part can be tested without a live website.
+- **One policy, many sources.** Every provider is normalized into a common `Offer`
+  model; all business rules live in `config.json`, not in the adapters.
+- **Party of 2 adults**, budget per person (default: at most 1500 PLN, inclusive).
+- **Airport preference** with a strong Łódź (LCJ) preference, then Warsaw (WAW/WMI,
+  equal), Katowice (KTW) and Wrocław (WRO).
+- **Hotel quality rules:** minimum star rating, provider ratings kept on their **native
+  scales** (e.g. ITAKA 1-6, Wakacje.pl 0-10) with price-dependent thresholds, and meal
+  (board) rules per price band.
+- **Attractiveness category** shown in every alert: 🔥 HOT, 👍 GOOD or ✓ MATCH.
+- **Price history and price events:** `NEW`, `PRICE_DROP`, `NEW_LOW` and `RETURNED`, with a
+  configurable noise floor so a 1 PLN change never pages anyone.
+- **Telegram notifications** via the official Bot API (plain HTTPS, no third-party
+  library), with a console/log fallback for development.
+- **Climate context:** a typical daytime temperature for the destination and month.
+- **Scheduler** with per-provider intervals (optionally randomized), active hours,
+  per-provider error isolation and exponential backoff; notification delivery retries
+  with bounded backoff through a transactional outbox.
+- **Respectful access:** `robots.txt` is checked before scanning, with request budgets,
+  request gaps, cycle deadlines and fail-closed handling of blocks or unexpected pages.
+
+## Provider status
+
+| Provider | Status | Access method | Price used for alerts |
+| --- | --- | --- | --- |
+| Wakacje.pl (`wakacje.pl`) | **Active** | Plain HTTP listing pages, robots-checked | Listing price, shown with an explicit "unconfirmed" disclaimer |
+| ITAKA (`itaka`) | **Active** | Plain HTTP listing + public offer-detail response, robots-checked | Confirmed operator booking price (incl. mandatory TFG/TFP fees) |
+| TUI (`tui`) | **Active** | robots check over HTTP, then headless Chromium that passively observes TUI's own search results; offer detail page for real-time price confirmation | Confirmed real-time price only |
+| Rainbow (`rainbow`) | **Blocked by source policy, disabled** | -- | -- |
+
+Rainbow: `r.pl/robots.txt` disallows the search path that the production flow needs.
+The adapter is kept in the codebase (tested offline only) in case an allowed access path
+appears, but `providers.rainbow.enabled` must stay `false`, and the CLI refuses `--watch`
+while it is enabled. This project does not work around robots rules.
+
+A fictional `mock` provider exists for offline demos and tests.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Config[Validated configuration] --> Scheduler
-    Scheduler --> Providers[Provider adapters]
-    Providers --> Filters[Eligibility filters]
-    Filters --> Candidates[Deduplication and preliminary ranking]
-    Candidates --> External[Optional hotel verification]
-    External --> Ranking[Final ranking]
-    Filters --> SQLite[(SQLite snapshots and history)]
-    External --> SQLite
+    Scheduler[Scheduler: due times, backoff, active hours] --> Providers[Provider adapters]
+    Providers --> Offer[Common Offer model]
+    Offer --> Filters[Hard filters]
+    Filters --> Ranking[Deduplication and ranking]
+    Ranking --> SQLite[(SQLite: snapshots, price history, alert state)]
     SQLite --> Outbox[Transactional notification outbox]
-    Outbox --> Notifier[Telegram notifier, console fallback]
+    Outbox --> Notifier[Telegram, or console fallback]
 ```
+
+The attractiveness category and the message text are computed from the stored offer
+snapshot when a notification is rendered, independent of the transport.
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py`, `config_types.py` | Typed JSON contracts, environment overrides and startup validation |
-| `models.py` | Dataclass offer model, Decimal prices and conservative duplicate identity |
-| `providers/` | Source interfaces, factory registry, mock, bounded ITAKA HTML diagnostics and external-rating placeholder |
-| `filtering.py`, `ratings.py` | Pure eligibility rules and native-scale normalization |
-| `ranking.py`, `presentation.py` | Weighted comparison and rating display |
-| `pipeline.py` | Filter, shortlist, enrich and persist observations |
-| `scheduler.py` | Per-source due times, retry backoff and injected clocks |
-| `active_hours.py` | Pure configurable local time-of-day window gating provider scans |
-| `alerts.py` | Pure price-event decisions: new offer, returned, price drop, new historical low |
-| `storage.py` | SQLite snapshots, history, schedules and transactional outbox |
-| `notifications.py` | Delivery interface, Telegram Bot API notifier and local logging implementation |
-| `notification_content.py` | Transport-independent message content from persisted alert snapshots |
+| `config.py`, `config_types.py` | Typed JSON configuration, `.env`/environment overrides, strict startup validation |
+| `models.py` | `Offer` dataclass, Decimal prices, conservative duplicate identity |
+| `providers/` | One adapter per source, shared HTTP client, robots policy, provider registry |
+| `filtering.py`, `ratings.py`, `boards.py` | Pure eligibility rules, native rating scales, board normalization |
+| `ranking.py`, `attractiveness.py` | Internal ranking score; HOT/GOOD/MATCH classification |
+| `pipeline.py` | Filter, deduplicate, rank and persist observations |
+| `scheduler.py`, `active_hours.py` | Per-provider due times, backoff, active-hours gate |
+| `alerts.py` | Pure price-event decisions |
+| `storage.py` | SQLite snapshots, price history, provider schedules, outbox |
+| `notifications.py`, `notification_content.py` | Telegram/console delivery; transport-independent message content |
+| `climate.py` | Static, region-level typical temperatures per month |
 
-### Design choices
+### Design decisions
 
-- Standard-library dataclasses model offers; TypedDict describes configuration and
-  serialized records. Pydantic validates JSON at the boundary without introducing an ORM.
-- Decimal avoids floating-point monetary comparisons. SQLite stores monetary values
-  as decimal strings and creates the snapshot and alert in one transaction.
-- Providers, notification delivery, clocks and external hotel verification are injected.
-  New sources need an adapter, a registry entry and configuration, not scheduler changes.
-- Broad exception handling is limited to adapter/delivery boundaries, with tracebacks
-  logged. Storage failures propagate instead of being mistaken for bad source data.
-- A sequential scheduler is sufficient for a small local application. No web framework,
-  message broker or distributed task queue is required.
+- **HTTP parsing where possible, a browser only where needed.** ITAKA and Wakacje.pl are
+  read over plain HTTP without executing JavaScript. Only TUI uses Playwright, because its
+  results are rendered client-side; the browser observes the site's own responses during
+  ordinary navigation and never calls the underlying API directly.
+- **Fail closed.** Unknown airports, meals, ratings or prices never pass a hard filter. A
+  blocked, redirected or structurally unexpected response stops that provider's cycle
+  instead of producing guessed data. An ambiguous price is never promoted to "confirmed".
+- **Provider isolation.** A failing source is logged and backed off without stopping the
+  other providers or notification delivery. Database errors are not disguised as source
+  errors; they propagate.
+- **Typed Python.** Dataclasses for the domain model, TypedDict for configuration and
+  records, Pydantic (strict mode) to validate JSON at the boundary, Decimal for money, and
+  mypy `--strict` over both production code and tests.
+- **SQLite as the MVP store.** One local file, no ORM, no server. The snapshot and its
+  alert are written in one transaction.
+- **No unnecessary infrastructure.** A sequential scheduler is enough for a few sources
+  polled every few minutes; there is no web server, message broker or task queue.
+- **Injected dependencies.** Providers, transports, clocks and notifiers are injected, so
+  every part is tested without network access.
 
-## Technologies
+## Filtering, scoring and alerts
 
-Python 3.10+, SQLite, dataclasses, Pydantic, python-dotenv, Playwright, pytest, Ruff and mypy.
-Active hours use the standard-library `zoneinfo` module; `tzdata` is an additional
-dependency only on Windows, which (unlike most Linux distributions) has no built-in IANA
-time zone database for `zoneinfo` to read.
-The GitHub Actions configuration runs checks on Windows and Linux with Python 3.10/3.14.
+1. **Hard filters** (all must pass): 2 travelers; price per person within
+   `filters.max_price`; a confirmed complete price (Wakacje.pl is the only source whose
+   listing price is accepted, via `filters.accept_incomplete_price_from`); departure
+   airport in `filters.airports`; at least `filters.min_stars` stars (3); provider rating
+   rule; board rule; optional `min_nights`/`max_nights` (currently unrestricted).
+2. **Provider rating rules** keep native scales:
 
-## Quick start
+   | Source | Native scale | Below 1000 PLN/person | 1000-1500 PLN/person |
+   | --- | --- | --- | --- |
+   | `itaka` | 1-6 | at least 4.0 | at least 5.0 |
+   | `wakacje.pl` | 0-10 | at least 8.0 | at least 8.0 |
+   | `tui` | 1-5 (TripAdvisor) | no hard threshold (used for ranking/attractiveness) | same |
+   | `rainbow` (disabled) | 0-6 | at least 5.0 | at least 5.0 |
 
-Open a terminal in the project directory. On Windows PowerShell:
+3. **Board rules.** Canonical boards are RO, BB, ZO, HB, FB, AI and UAI (shown as e.g.
+   "Śniadania i obiadokolacje (HB)" or "Ultra All Inclusive (UAI)"). An offer needs a board
+   listed in `filters.allowed_boards` **and** at least the minimum board of its price band
+   in `filters.board_price_bands` (below 1000 PLN: BB; 1000-1500 PLN: HB). With the
+   committed configuration (`allowed_boards`: HB, FB, AI, ZO) this means ZO/HB/FB/AI below
+   1000 PLN and HB/FB/AI from 1000 PLN. UAI is a recognized, ranked board, but it is not in
+   the committed `allowed_boards`, so UAI offers are filtered out until `"UAI"` is added
+   there. RO and unknown boards always fail.
+4. **Ranking** (internal sort order only, never shown): weighted price, airport priority,
+   native rating, review count, stars and board.
+5. **Attractiveness** (shown in the message header) looks at four areas -- value (price per
+   person per night), hotel quality (normalized rating), airport (LCJ strong) and board
+   (AI/UAI strong). 🔥 HOT needs at least two strong areas and no weak one; 👍 GOOD needs at
+   least one strong area and at most one weak one; everything else is ✓ MATCH. Thresholds
+   live in the `attractiveness` section of `config.json`.
+6. **Price events** per offer:
+
+   | Message header | Event | Meaning |
+   | --- | --- | --- |
+   | `NOWA` | `new_offer` | First eligible observation of this offer |
+   | `↩️ WRÓCIŁA` | `returned` | Eligible again after `alert_rearm_hours` (24 h) without an eligible observation |
+   | `📉 SPADEK CENY` | `price_drop` | Meaningful drop versus this offer's previous observed price |
+   | `🏆 NAJNIŻSZA CENA` | `new_low` | Meaningful drop to its lowest price ever recorded |
+
+   "Meaningful" means at least `price_drop_min_amount` (50 PLN) or `price_drop_min_percent`
+   (5 %). One observation produces at most one event (`new_low` wins over `price_drop`).
+   Unchanged prices, small drops and price increases update the history silently.
+
+## Running on a new Windows computer
+
+This section takes a fresh Windows 10/11 machine to a running agent. All commands are for
+**Windows PowerShell**, run from the project folder. They use the virtual environment's
+Python explicitly (`.\.venv\Scripts\python.exe`), so activating the environment is not
+required.
+
+### A. Requirements
+
+- **Windows 10 or 11** with a normal user account (administrator rights are not needed).
+- **Python 3.10 or newer**, 64-bit (CI tests 3.10 and 3.14). Install it from
+  [python.org](https://www.python.org/downloads/windows/) and make sure the `py` launcher
+  works: `py --version`.
+- **Git**, to clone the private repository ([git-scm.com](https://git-scm.com/download/win)),
+  plus a GitHub account that has access to it.
+- **Internet access** for installing packages, downloading Chromium once, the travel
+  sources and Telegram.
+- **Playwright's Chromium build** -- required because the TUI provider uses a headless
+  browser. It is installed by a command in step C; no separate Chrome/Edge installation is
+  used.
+- A **Telegram bot token and chat ID** (optional, but needed for phone notifications; see
+  [Telegram notifications](#telegram-notifications)).
+
+Nothing else is required: no database server, Docker, Node.js or paid service.
+
+### B. Get the project
+
+```powershell
+cd C:\path\to
+git clone <PRIVATE_REPOSITORY_URL> travel-deal-agent
+cd travel-deal-agent
+```
+
+Replace `C:\path\to` with the folder where the project should live and
+`<PRIVATE_REPOSITORY_URL>` with the repository's clone URL. Git asks you to sign in to
+GitHub the first time, because the repository is private. Every following command is run
+from this `travel-deal-agent` folder.
+
+### C. Create the virtual environment and install
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+- `requirements-dev.txt` installs the runtime dependencies plus pytest, Ruff and mypy
+  (needed for the offline test in step F). A runtime-only machine can use
+  `requirements.txt` instead. On Windows, `tzdata` is installed automatically.
+- `playwright install chromium` downloads the browser into the **current Windows user's**
+  profile (`%LOCALAPPDATA%\ms-playwright`). Run it as the same user that will run the
+  scheduled task.
+- Upgrading pip first is not required. If `py` is not found, use
+  `python -m venv .venv` instead.
+- Optional: `.\.venv\Scripts\Activate.ps1` activates the environment for interactive work.
+  If PowerShell blocks it with an execution-policy error, keep using the explicit
+  `.\.venv\Scripts\python.exe` paths shown here.
+
+### D. Configuration
+
+The business configuration is the committed `config.json` in the project root; there is no
+separate template to copy. Edit it with any text editor; the file is strictly validated at
+startup, so a typo or unknown key stops the program with a `Configuration error`. The most
+common settings are listed in [Configuration](#configuration).
+
+Machine-local settings and secrets go in `.env`, created from the example:
+
+```powershell
 Copy-Item .env.example .env
+```
+
+`.env.example` contains the database path, log level and config file name with working
+defaults. You do not need to change anything there for a normal installation.
+
+### E. Telegram secrets
+
+Open `.env` and set both values (remove the leading `#`):
+
+```dotenv
+TELEGRAM_BOT_TOKEN=<your-bot-token>
+TELEGRAM_CHAT_ID=<your-chat-id>
+```
+
+- Both must be set together; setting only one is a configuration error. With both unset,
+  alerts are only written to the log (`Notifications: console`).
+- Variables already set in Windows take precedence over `.env`.
+- `.env` is ignored by Git. **Never commit it**, and never paste the token into
+  `config.json`, the README, an issue or a screenshot.
+
+See [Telegram notifications](#telegram-notifications) for how to obtain the two values.
+
+> Tip: do the offline smoke test in step F **before** adding the Telegram secrets, so its
+> fictional demo offers are not sent to your phone.
+
+### F. First smoke test (no live requests)
+
+1. Run the offline test suite. It blocks network sockets and browser start-up, so it never
+   contacts a travel site or Telegram:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pytest -q
+   ```
+
+   Every test should pass.
+
+2. Optionally run the application itself against the fictional `mock` provider only, using
+   a temporary configuration and a separate database so the real history is untouched:
+
+   ```powershell
+   New-Item -ItemType Directory -Force data | Out-Null
+   $cfg = Get-Content config.json -Raw | ConvertFrom-Json
+   foreach ($p in $cfg.providers.PSObject.Properties) { $p.Value.enabled = ($p.Name -eq "mock") }
+   $cfg | ConvertTo-Json -Depth 20 | Set-Content data\smoke-config.json -Encoding utf8
+   $env:TDA_CONFIG = "data\smoke-config.json"; $env:TDA_DATABASE = "data\smoke.sqlite3"
+   .\.venv\Scripts\python.exe -m travel_deal_agent --force
+   Remove-Item Env:TDA_CONFIG, Env:TDA_DATABASE
+   Remove-Item data\smoke-config.json, data\smoke.sqlite3
+   ```
+
+   Expected output: `Checking provider mock`, `Provider mock matched 3 offers`, three
+   demo alerts and `MOCK DATA - not real travel offers`.
+
+**Important:** a normal run with the committed `config.json` contacts the real sources
+immediately (ITAKA, Wakacje.pl and TUI are enabled), unless the current time is outside
+active hours.
+
+### G. Manual run (one check)
+
+```powershell
 .\.venv\Scripts\python.exe -m travel_deal_agent --force
 ```
 
-Skip environment creation if `.venv` already exists. Copy `.env.example` only during
-first setup; preserve existing settings. Runtime-only installations can use
-`requirements.txt` instead of `requirements-dev.txt`.
+This performs one live check of every enabled provider and exits. `--force` ignores the
+saved per-provider due times and active hours; without it, a single run only scans
+providers whose next run is due (on a fresh database: all of them). Output goes to the
+terminal and to `logs\agent.log`.
 
-On Linux/macOS, use `python3 -m venv .venv` and `.venv/bin/python` for the commands above.
-
-To run continuously:
+### H. Continuous mode
 
 ```powershell
 .\.venv\Scripts\python.exe -m travel_deal_agent --watch
 ```
 
-Stop with Ctrl+C. Keep the terminal open and computer awake. A regular single check
-(without flags) respects saved due times; `--force` bypasses them for one manual run.
-Do not run multiple scheduler instances against the same database.
+The scheduler keeps running, scans each provider when it is due and stops with Ctrl+C.
+`--watch` and `--force` cannot be combined. For unattended 24/7 operation, do not keep a
+terminal open; use Task Scheduler as described next. **Never run two agents against the
+same database at the same time** -- the application itself holds no lock.
 
-## Configuration
+## Running continuously on Windows (Task Scheduler)
 
-Edit `config.json` and restart. Environment overrides in `.env` control
-`TDA_CONFIG`, `TDA_DATABASE` and `TDA_LOG_LEVEL`; operating-system variables take precedence.
-Relative paths resolve from the project root. Secrets belong only in environment
-variables or `.env`, which is ignored by Git. Generated databases and logs are also ignored.
+Task Scheduler starts the agent at sign-in with `pythonw.exe`, the console-less Python
+included in every Windows virtual environment. No `.bat`/`.ps1` helper is needed.
 
-The initial policy is:
+Below, `C:\path\to\travel-deal-agent` stands for **your** project folder -- replace it
+everywhere.
 
-- Exactly 2 travelers. Stay length is currently unrestricted (`filters.min_nights` and
-  `filters.max_nights` are both `null` in production); set either to a positive integer
-  number of nights to re-enable that bound without a code change. Nights are always
-  computed as `return_date - departure_date`, the one stay-length signal that means the
-  same thing for every provider -- never from the provider-specific `Offer.number_of_days`
-  (ITAKA/Rainbow count touroperator "dni" = nights + 1; Wakacje.pl/TUI count nights directly).
-- At most 1500 PLN **per person**, inclusive; total party price is not the budget field.
-- LCJ > WAW/WMI (equal) > KTW > WRO departures.
-- At least 3 hotel stars (`filters.min_stars`), the same for every country. There is no
-  country whitelist: an offer is never rejected only because its source country has no
-  mapped ISO code (such an offer keeps `country` empty and shows the source's country name
-  in its destination).
-- Missing information needed by a hard filter rejects the offer. Missing Google data does not.
+### Create the task
 
-| Source ID | Native scale | Below 1000 PLN/person | 1000–1500 PLN/person |
-| --- | --- | --- | --- |
-| `rainbow` | 0–6 | 5.0 minimum | 5.0 minimum |
-| `itaka` | 1–6 | 4.0 minimum | 5.0 minimum |
-| `wakacje.pl` | 0–10 | 8.0 minimum (single threshold) | 8.0 minimum (single threshold) |
-| `mock` | 0–10 | Rating filter disabled | Rating filter disabled |
+1. Press the Windows key, type **Task Scheduler** and open it.
+2. In the right-hand **Actions** pane, click **Create Task…** (not "Create Basic Task",
+   which hides options needed below).
+3. **General** tab:
+   - Name: `Travel Deal Agent`
+   - User account: your own account (the default shown under "When running the task, use
+     the following user account").
+   - Select **Run only when user is logged on**.
+   - Leave **Run with highest privileges** unchecked.
+4. **Triggers** tab → **New…**:
+   - Begin the task: **At log on**
+   - Settings: **Specific user** -- your account.
+   - **Enabled** checked; no repetition.
+5. **Actions** tab → **New…**:
+   - Action: **Start a program**
+   - Program/script: `C:\path\to\travel-deal-agent\.venv\Scripts\pythonw.exe`
+   - Add arguments (optional): `-m travel_deal_agent --watch`
+   - Start in (optional): `C:\path\to\travel-deal-agent`
 
-These are configured project requirements. The current board whitelist is HB, FB, AI and ZO
-("Według programu" -- Wakacje.pl's itinerary-based board, service code 5, accepted as a
-normal canonical board but never treated as better than HB/FB/AI); other meal types require
-an explicit configuration change even if a price band allows them.
-Price bands use inclusive lower bounds and exclusive upper bounds unless
-`max_inclusive: true` is set. Bands must be ordered and non-overlapping. Add more bands
-without changing the filtering code. A rule may instead set one price-independent
-`min_rating` with empty `price_bands` (Wakacje.pl uses `min_rating: 8`); a rule cannot use
-both. Unknown source IDs and uncovered price bands fail
-an enabled rating filter.
+   **Start in is required in practice**, even though Windows labels it optional: without
+   it, Python cannot find the `travel_deal_agent` package and exits immediately.
+6. **Conditions** tab -- uncheck:
+   - Start the task only if the computer is idle for
+   - Start the task only if the computer is on AC power
+   - Stop if the computer switches to battery power
+   - Wake the computer to run this task
+   - Start only if the following network connection is available
+7. **Settings** tab:
+   - **Allow task to be run on demand**: checked
+   - **Run task as soon as possible after a scheduled start is missed**: unchecked
+   - **If the task fails, restart every**: 1 minute; **Attempt to restart up to**: 3 times
+   - **Stop the task if it runs longer than**: **unchecked** (Windows pre-selects 3 days,
+     which would kill the agent)
+   - **If the running task does not end when requested, force it to stop**: checked
+   - **If the task is already running, then the following rule applies**:
+     **Do not start a new instance** -- this is what prevents two agents from writing to
+     the same database.
+8. Click **OK**. With "Run only when user is logged on", no password is stored.
 
-Ranking weights cover price, airport, native rating, native review count, stars, Google
-rating, Google review count and meal quality. Native scales normalize with
-`100 * (value - minimum) / (maximum - minimum)`. Review counts use a logarithmic score
-with a configurable cap; star normalization is configurable too.
+### Start it for the first time
 
-`external_verification` selects a configurable number of top candidates **after** hard
-filters, deduplication and preliminary ranking. It is disabled by default. Google and Tripadvisor
-adapters are placeholders: enabling the flag alone makes no network requests. Each future
-implementation must return a confidently matched hotel, rating, review count and optional
-location/place ID. Ambiguous matches return no data. Example presentation:
+In **Task Scheduler Library**, select **Travel Deal Agent** and click **Run** in the right
+pane. The status changes to **Running** (press F5 to refresh). No window appears -- that is
+expected with `pythonw.exe`. Wait a minute or two and [check the log](#check-that-the-agent-is-working).
 
-```text
-ITAKA: 5.3/6 | Google: 4.4/5 | Tripadvisor: 4.5/5
-ITAKA: 5.3/6 | Google: brak danych | Tripadvisor: 4.5/5
-```
+From now on the agent starts automatically every time you sign in to Windows. It does not
+run while the computer is asleep, shut down or signed out, and the task does not wake the
+computer.
 
-Each source has its own polling cadence. Setting `interval_min_seconds` and
-`interval_max_seconds` on a provider draws a fresh random delay from that range after
-every *successful* cycle (`next_run = now + uniform(interval_min_seconds,
-interval_max_seconds)`), avoiding a perfectly periodic schedule while spreading real
-requests out over time — this is not a mechanism for evading a site's protections.
-Equal bounds give an exact interval and skip the random draw. A provider without both
-fields configured keeps using its plain `interval_seconds` exactly as before; this is
-a backward-compatible fallback, not a deprecated field, and a config with only one of
-the two range fields set is rejected at startup. A failed cycle always uses the
-existing deterministic exponential backoff (`interval_seconds * 2**failures`, capped by
-`scheduler.max_backoff_exponent`) regardless of any configured range, so retry timing
-after an error is never randomized. Each source's own `robots.txt`, crawl-delay,
-`request_gap_seconds` and `cycle_seconds` request budget are independent, lower-level
-protections that this scheduler-level range never loosens; a source that needs a more
-cautious cadence can simply configure a larger range. The mock's `interval_seconds`
-defaults to 600, which is not a recommended interval for real websites. Scheduler idle
-polling is configurable too.
+### Stop and start again
+
+- **Stop:** Task Scheduler → Task Scheduler Library → select **Travel Deal Agent** →
+  **End**. The status returns to **Ready**.
+- **Start again:** select the task → **Run**.
+
+### Restart after a code or configuration change
+
+The running process reads its code, `config.json` and `.env` only at start-up. After you:
+
+- update the code (for example `git pull`),
+- edit `config.json`, or
+- change `.env` / Telegram secrets or other environment variables,
+
+restart the task: **End**, then **Run**. Reinstalling is not needed. Run
+`.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt` again only if an update
+changed `requirements.txt` or `requirements-dev.txt`.
 
 ### Active hours
 
-`active_hours` restricts provider scans (in both a single check and `--watch`) to a
-configurable local time-of-day window, so the agent can be left running continuously
-without polling sources while nobody can act on an alert:
+The committed configuration scans only between **07:00 and 23:30 (Europe/Warsaw)**:
 
 ```json
 "active_hours": {
@@ -182,393 +381,152 @@ without polling sources while nobody can act on an alert:
 }
 ```
 
-`active_from` is inclusive and `active_until` is exclusive, matching the price-band
-convention used elsewhere in this configuration. A window may wrap past midnight (for
-example `"22:00"`/`"06:00"`). `timezone` accepts any IANA name resolvable by the
-standard-library `zoneinfo` module. Setting `enabled` to `false` disables the gate
-(scans run at any hour), without a code change. `--force` bypasses the gate for one
-manual check, exactly like it already bypasses each provider's due time.
+Outside this window the process stays alive but makes no requests; when the window opens
+it runs one normal check of each due provider, not a burst of missed scans. `active_from`
+is inclusive, `active_until` exclusive, windows may wrap past midnight, and
+`"enabled": false` scans at any hour. `--force` bypasses the window for one manual run.
 
-Outside active hours, `run_forever` keeps running and waiting (`scheduler.idle_poll_seconds`
-between checks) instead of scanning; it never sends a notification about being idle. Each
-provider's own persisted due time (`interval_seconds`, or the randomized range above) is
-untouched while scans are skipped, so entering active hours triggers exactly one normal
-check per due provider, not a burst covering every interval missed overnight.
+## Check that the agent is working
 
-## Automatyczne uruchamianie na Windows (Task Scheduler)
-
-Ta sekcja pokazuje, krok po kroku, jak sprawić, żeby Travel Deal Agent uruchamiał się sam
-po zalogowaniu do Windows i działał w tle w trybie `--watch` — bez otwierania VS Code, bez
-terminala i bez żadnego dodatkowego pliku pomocniczego (`.bat`/`.cmd`/`.ps1`). Windows
-Task Scheduler potrafi uruchomić program bezpośrednio.
-
-Instrukcja zakłada dokładnie taki układ folderów, jaki jest w tym repozytorium:
-
-- folder projektu: `C:\Projects\travel-deal-agent`
-- środowisko wirtualne już utworzone w: `C:\Projects\travel-deal-agent\.venv`
-
-Jeśli projekt znajduje się w innym miejscu na Twoim komputerze, wszędzie poniżej zamień
-`C:\Projects\travel-deal-agent` na swoją rzeczywistą ścieżkę.
-
-### Dlaczego używamy `pythonw.exe`, a nie `python.exe`
-
-Każde środowisko wirtualne (`.venv`) utworzone na Windows zawiera dwa programy:
-`python.exe` (otwiera czarne okno konsoli) i `pythonw.exe` (ten sam Python, ale bez okna).
-Używając `pythonw.exe`, agent działa całkowicie w tle — nie zobaczysz żadnego okna, nawet
-na pasku zadań. Nie wpływa to na logowanie: aplikacja i tak zapisuje wszystko do pliku
-(patrz sekcja o logach niżej).
-
-### Dlaczego pole "Start in" jest konieczne
-
-Ten projekt **nie jest zainstalowany jako pakiet Pythona** — uruchamiamy go poleceniem
-`python -m travel_deal_agent` bezpośrednio z folderu ze źródłami. Żeby to polecenie
-zadziałało, Windows musi "stać" (mieć jako katalog roboczy) dokładnie w folderze
-projektu — tym, w którym znajdują się m.in. `config.json`, `.env` i folder
-`travel_deal_agent`. Właśnie do tego służy pole **"Start in"** w Task Schedulerze.
-
-Jeśli pole "Start in" zostanie puste albo wskaże zły folder, zadanie się nie uruchomi —
-zakończy się od razu błędem w stylu `No module named travel_deal_agent`. To jedna z
-najczęstszych przyczyn problemów, dlatego to pole jest równie ważne jak samo "Program/script".
-
-### Krok po kroku: tworzenie zadania w Task Schedulerze
-
-Nie są potrzebne uprawnienia administratora.
-
-1. Wciśnij klawisz Windows, wpisz **Task Scheduler** (lub: Harmonogram zadań) i otwórz go.
-2. Po prawej stronie kliknij **Create Task…** (nie "Create Basic Task" — podstawowy
-   kreator nie pokazuje wszystkich opcji, których potrzebujemy).
-3. **Zakładka General:**
-   - Name: `Travel Deal Agent`
-   - Description: `Automatically runs Travel Deal Agent in watch mode.`
-   - Zostaw zaznaczone **"Run only when user is logged on"**.
-   - **Nie zaznaczaj** "Run with highest privileges".
-   - Jeśli dostępne jest pole "Configure for", wybierz **Windows 10** (na Windows 11 ten
-     wybór jest poprawny i nic nie psuje — to tylko starsza etykieta kompatybilności).
-4. **Zakładka Triggers** → **New…**:
-   - Begin the task: **At log on**
-   - Specific user: konto, na które aktualnie się logujesz w Windows
-   - Zostaw **Enabled** zaznaczone
-   - Nie ustawiaj żadnego dodatkowego harmonogramu ani "Repeat task every…" — wystarczy samo
-     logowanie.
-5. **Zakładka Actions** → **New…**:
-   - Action: **Start a program**
-   - Program/script: `C:\Projects\travel-deal-agent\.venv\Scripts\pythonw.exe`
-   - Add arguments: `-m travel_deal_agent --watch`
-   - Start in: `C:\Projects\travel-deal-agent`
-6. **Zakładka Conditions** — odznacz wszystko, co jest zaznaczone domyślnie:
-   - "Start the task only if the computer is idle for" — **wyłączone**
-   - "Start the task only if the computer is on AC power" — **wyłączone**
-   - "Stop if the computer switches to battery power" — **wyłączone**
-   - "Wake the computer to run this task" — **wyłączone**
-   - "Start only if the following network connection is available" — **wyłączone**
-
-   Dzięki temu agent będzie działał również na laptopie odłączonym od zasilania. Uwaga:
-   **to nie wybudzi uśpionego komputera** — jeśli komputer śpi lub jest wyłączony, agent po
-   prostu nie działa, aż do następnego zalogowania (patrz sekcja niżej).
-7. **Zakładka Settings:**
-   - "Allow task to be run on demand" — **włączone** (przyda się do pierwszego testu, patrz
-     niżej)
-   - "Run task as soon as possible after a scheduled start is missed" — **wyłączone**
-   - "If the task fails, restart every:" **1 minute**, "Attempt to restart up to:" **3 times**
-   - "Stop the task if it runs longer than:" — **wyłączone (odznaczone)**
-   - "If the running task does not end when requested, force it to stop" — **włączone**
-   - "If the task is already running, then the following rule applies:" →
-     **Do not start a new instance**
-
-   ⚠️ **Bardzo ważne:** Task Scheduler domyślnie proponuje zaznaczone
-   **"Stop the task if it runs longer than: 3 days"**. To ustawienie **trzeba koniecznie
-   odznaczyć** — Travel Deal Agent w trybie `--watch` ma działać w sposób ciągły, a nie
-   zostać automatycznie zabity po trzech dniach.
-
-   Opcja "Do not start a new instance" jest równie ważna z innego powodu: aplikacja sama
-   nie pilnuje, czy już działa gdzieś indziej, więc gdyby Task Scheduler uruchomił drugą
-   kopię, obie zaczęłyby korzystać z tej samej bazy danych (`data/offers.sqlite3`)
-   jednocześnie. Ten mechanizm w Task Schedulerze temu zapobiega.
-8. Kliknij **OK**, żeby zapisać zadanie. System może poprosić o hasło do konta Windows tylko
-   wtedy, gdy zapisuje je do uruchamiania zadania bez zalogowania — przy wybranej opcji
-   "Run only when user is logged on" **hasło nie jest nigdzie potrzebne ani zapisywane**.
-
-### Pierwsze kontrolowane uruchomienie
-
-Zanim zaufasz automatycznemu logowaniu, warto raz uruchomić zadanie ręcznie i sprawdzić,
-czy wszystko działa poprawnie:
-
-1. Otwórz **Task Scheduler**.
-2. Kliknij **Task Scheduler Library** po lewej stronie.
-3. Znajdź na liście zadanie **Travel Deal Agent**.
-4. Sprawdź, że w kolumnie Status widnieje **Ready**.
-5. Kliknij na to zadanie (zaznacz je), żeby zobaczyć jego szczegóły na dole/z prawej.
-6. Sprawdź zakładkę **Actions** w szczegółach — powinny tam być te same wartości, które
-   wpisano powyżej (Program/script, Add arguments, Start in).
-7. Kliknij **Run** po prawej stronie (w panelu akcji).
-8. Status zadania powinien zmienić się z **Ready** na **Running**.
-9. **Nie klikaj Run ponownie** — jedno uruchomienie wystarczy; kolejne kliknięcie mogłoby
-   próbować odpalić drugą kopię (chronioną przez "Do not start a new instance", ale i tak
-   nie jest to potrzebne).
-10. Odczekaj około **2 minut**, żeby agent zdążył wykonać pierwszy cykl sprawdzania ofert.
-11. Następnie sprawdź plik logu, jak opisano niżej.
-
-### Gdzie są logi i czego w nich szukać
-
-Aplikacja zapisuje logi do pliku:
-
-```
-C:\Projects\travel-deal-agent\logs\agent.log
-```
-
-(dokładnie: podfolder `logs` w folderze projektu, plik `agent.log` — tworzy go i zapisuje
-sam program przy starcie; nie trzeba go tworzyć ręcznie). Plik jest rotowany automatycznie
-(maks. ok. 2 MB, do 3 kopii zapasowych: `agent.log.1`, `agent.log.2`, `agent.log.3`), więc
-nie urośnie w nieskończoność.
-
-Najprostszy sposób podejrzenia najnowszych wpisów — w PowerShell:
+Logs are written to `logs\agent.log` in the project folder (created automatically, rotated
+at about 2 MB with up to three backups, `agent.log.1`..`agent.log.3`). Timestamps are local
+time. From the project folder:
 
 ```powershell
-Get-Content "C:\Projects\travel-deal-agent\logs\agent.log" -Tail 40
+# Last 40 lines
+Get-Content .\logs\agent.log -Tail 40
+
+# Most recent start of the program
+Select-String -Path .\logs\agent.log -Pattern "Notifications:" | Select-Object -Last 1
+
+# Recent errors
+Select-String -Path .\logs\agent.log -Pattern " ERROR " | Select-Object -Last 5
 ```
 
-Możesz też po prostu otworzyć ten plik w Notatniku.
+What normal operation looks like:
 
-Czego szukać w logu po pierwszym uruchomieniu:
+| Log line | Meaning |
+| --- | --- |
+| `Notifications: telegram` / `Notifications: console` | The program started; shows the delivery channel |
+| `Search started` ... `Search finished in ...s; N unique matches` | One scheduler pass. In `--watch` mode passes repeat about every 30 s (`scheduler.idle_poll_seconds`), most of them with no provider due; `0 unique matches` is normal |
+| `Checking provider tui` → `Provider tui fetched N offers` → `Provider tui matched N offers` | A real scan of one provider (same for `itaka` and `wakacje.pl`) |
+| `Outside active hours; skipping provider scans` | Night-time idling, expected |
+| `Provider ... failed; retry in ...s` | That source failed; it backs off and retries later, others continue |
+| `Notification ... failed; will retry later` | Telegram delivery failed; the alert stays queued |
 
-- **Czy aplikacja wystartowała** — na samym początku powinna pojawić się linia
-  `Notifications: telegram` albo `Notifications: console` (informuje, czy powiadomienia
-  idą na Telegram, czy tylko lokalnie do logu).
-- **Czy zaczął się cykl sprawdzania** — linia `Search started`.
-- **Czy TUI zostało sprawdzone** — linia `Checking provider tui`, a po chwili
-  `Provider tui fetched ... offers` (jeśli w `config.json` provider `tui` ma
-  `"enabled": true`, co jest aktualnym stanem tego repozytorium).
-- **Czy Wakacje.pl zostało sprawdzone** — analogicznie `Checking provider wakacje.pl` i
-  `Provider wakacje.pl fetched ... offers` (ten provider też jest obecnie włączony).
-- **Czy wystąpił błąd** — szukaj słowa `ERROR` na początku linii albo tekstu w stylu
-  `Provider ... failed; retry in ...s` (błąd pojedynczego źródła — sam się wycofa i spróbuje
-  później) albo `Notification ... failed; will retry later` (nie udało się wysłać
-  powiadomienia na Telegram — spróbuje ponownie w kolejnym cyklu).
-- **Czy cykl się zakończył** — linia `Search finished in ...s; N unique matches` (N to
-  liczba dopasowanych ofert w tym cyklu; 0 jest normalnym wynikiem, jeśli nic nie spełniło
-  kryteriów).
-- **Czy powstały alerty/powiadomienia** — zależy od tego, co pokazała linia
-  "Notifications" na starcie:
-  - jeśli **console** — sama treść powiadomienia (nazwa hotelu, cena itd.) pojawi się
-    wprost w logu;
-  - jeśli **telegram** — treść powiadomienia trafia do Twojego czatu na Telegramie, a w
-    logu zobaczysz tylko ewentualny komunikat o niepowodzeniu wysyłki (brak linii o błędzie
-    = wysyłka się powiodła).
+With Telegram configured, alerts go to the chat and do not appear in the log; with the
+console fallback, the full alert text is logged.
 
-Jeśli po ok. 2 minutach w pliku nie ma żadnych nowych linii, patrz sekcja
-"Rozwiązywanie problemów" niżej.
+**Task Scheduler:** the task's **Status** column shows **Running** while the agent runs;
+**Last Run Result** `0x41301` means "currently running". `(0x2)` means the program exited
+with a configuration or command-line error.
 
-### Jak zatrzymać agenta
+**Task Manager** (Details tab): a running agent normally shows **two** `pythonw.exe`
+processes. The virtual environment's `pythonw.exe` is a small launcher that starts the real
+interpreter as a child process; this is not a duplicate agent. After **End**, both should
+disappear.
 
-1. Otwórz **Task Scheduler** → **Task Scheduler Library**.
-2. Zaznacz zadanie **Travel Deal Agent**.
-3. Kliknij **End** po prawej stronie.
-4. Status zadania powinien wrócić do **Ready**.
+## Moving to another computer
 
-Zatrzymanie w ten sposób nie kasuje ani nie psuje zadania — możesz je uruchomić ponownie
-ręcznie (przyciskiem Run) albo poczekać na kolejne logowanie do Windows.
+Do **not** copy these from the old machine -- they are machine-specific or regenerated:
 
-### Restart po aktualizacji kodu
+- `.venv\` (contains absolute paths to the old Python installation)
+- `__pycache__\`, `.pytest_cache\`, `.mypy_cache\`, `.ruff_cache\`
+- `logs\`
+- diagnostic folders under `data\` (for example browser capture or recon artifacts)
 
-Python wczytuje pliki `.py` tylko raz, przy starcie procesu — proces działający w tle
-**nie widzi** żadnej zmiany w folderze `travel_deal_agent` (np. po `git pull` albo po ręcznej
-edycji), dopóki nie zostanie zatrzymany i uruchomiony ponownie, dokładnie tak samo jak po
-zmianie `config.json` (patrz sekcja "Godziny działania agenta" niżej). Po każdej aktualizacji
-kodu źródłowego: zatrzymaj zadanie (patrz "Jak zatrzymać agenta" wyżej), a następnie uruchom je
-ponownie (przyciskiem Run albo przez wylogowanie/zalogowanie). Proces, który działa od dawna,
-nadal będzie stabilnie pracował ze starą wersją logiki źródeł/filtrów — nie ulegnie awarii, ale
-też nie skorzysta z żadnej poprawki wprowadzonej po jego starcie.
+Instead, on the new computer: clone the repository, create a new `.venv`, install the
+dependencies and Chromium, create `.env` with the Telegram secrets (transfer them
+privately, not through the repository), review `config.json` and create the Task Scheduler
+task -- that is, follow [Running on a new Windows computer](#running-on-a-new-windows-computer)
+and the Task Scheduler section.
 
-### Co dzieje się po ponownym uruchomieniu komputera
+The price history lives in one SQLite database, `data\offers.sqlite3` (configurable with
+`TDA_DATABASE`). Choose one of two options:
 
-- Po ponownym uruchomieniu komputera i **zalogowaniu się do Windows**, Task Scheduler sam
-  uruchamia Travel Deal Agent — nic więcej nie trzeba klikać.
-- **Nie trzeba otwierać VS Code.**
-- **Nie trzeba otwierać żadnego terminala/PowerShella.**
-- Ponieważ używamy `pythonw.exe`, program działa **bez żadnego widocznego okna** — nie
-  zobaczysz go na pasku zadań ani na pulpicie; to normalne i zgodne z założeniem.
-- Mechanizm **"Do not start a new instance"** pilnuje, żeby nie powstała druga kopia
-  agenta (np. przy podwójnym zalogowaniu albo szybkim wylogowaniu i zalogowaniu) — dzięki
-  temu nigdy dwa procesy nie będą jednocześnie zapisywać do tej samej bazy danych.
+**A. New history.** Do not copy the database. The agent creates an empty one on first
+start. Every currently matching offer is then treated as new, so expect a first wave of
+`NOWA` alerts, and price-drop detection starts from zero.
 
-### Godziny działania agenta
+**B. Keep price history.**
 
-Agent sprawdza oferty tylko w wyznaczonych godzinach — steruje tym sekcja
-`active_hours` w pliku `config.json`. Aktualna zawartość tej sekcji w repozytorium to:
+1. **Stop the agent on both computers** (Task Scheduler → End; confirm no `pythonw.exe`
+   is left in Task Manager).
+2. On the old computer, copy `data\offers.sqlite3`.
+3. The application uses SQLite's default rollback journal, not WAL, so there are no
+   `-wal`/`-shm` files and, once the agent is stopped, `offers.sqlite3` alone is the
+   complete database. If an `offers.sqlite3-journal` file is present next to it, the last
+   write was interrupted: do not delete it -- start and stop the agent once on the old
+   computer so SQLite recovers the database, then copy `offers.sqlite3`.
+4. On the new computer, place the file at `data\offers.sqlite3` in the project folder
+   (create `data` if needed) **before** the agent's first start there.
+5. Start the task on the new computer only. Never run both computers' agents with
+   copies of the same history and the same Telegram chat at the same time, or you will
+   receive duplicate alerts.
 
-```json
-"active_hours": {
-  "enabled": true,
-  "timezone": "Europe/Warsaw",
-  "active_from": "07:00",
-  "active_until": "23:30"
-}
-```
+## Configuration
 
-Czyli obecnie: godziny aktywne to **07:00–23:30 czasu warszawskiego**, mechanizm jest
-**włączony**. Żeby to zmienić, edytuj bezpośrednio te cztery pola w `config.json`:
+All business rules are in `config.json` (strictly validated; unknown keys and wrong types
+are rejected). Prices are strings in PLN per person. After any change, restart the agent.
 
-- `enabled` — `true`/`false`: `false` całkowicie wyłącza to ograniczenie (agent sprawdza
-  oferty o każdej porze).
-- `timezone` — dowolna nazwa strefy czasowej w formacie IANA, np. `Europe/Warsaw`.
-- `active_from` — godzina rozpoczęcia (format `HH:MM`, włącznie).
-- `active_until` — godzina zakończenia (format `HH:MM`, bez tej minuty).
+| What | Where in `config.json` |
+| --- | --- |
+| Maximum price per person | `filters.max_price` (e.g. `"1500"`) |
+| Number of travelers | `filters.people` (the adapters and alerts assume 2) |
+| Allowed departure airports | `filters.airports` |
+| Airport preference (ranking) | `ranking.airport_priority` and `ranking.airport_groups` (LCJ first, WAW/WMI equal) |
+| Airport preference (attractiveness) | `attractiveness.airport.strong` / `.normal` |
+| Minimum hotel stars | `filters.min_stars` |
+| Stay length | `filters.min_nights` / `filters.max_nights` (`null` = unrestricted) |
+| Provider rating thresholds | `filters.provider_ratings.<provider>` |
+| Boards | `filters.allowed_boards`, `filters.board_price_bands` |
+| Listing prices accepted without confirmation | `filters.accept_incomplete_price_from` |
+| Enable/disable a provider | `providers.<provider>.enabled` |
+| Scan interval | `providers.<provider>.interval_seconds`, or a randomized range with both `interval_min_seconds` and `interval_max_seconds` |
+| Per-provider request limits | `max_pages`, `max_requests`, `max_detail_requests`, `timeout_seconds`, `cycle_seconds`, `request_gap_seconds` (keys differ slightly per provider) |
+| Scheduler idle polling / backoff cap | `scheduler.idle_poll_seconds`, `scheduler.max_backoff_exponent` |
+| Active hours | `active_hours` |
+| Price-event noise floor | `price_drop_min_amount`, `price_drop_min_percent` |
+| Re-announce after absence | `alert_rearm_hours` |
+| Attractiveness thresholds | `attractiveness` |
+| Optional external hotel ratings | `external_verification` (disabled; Google/Tripadvisor adapters are offline placeholders) |
 
-Po zmianie `config.json` zadanie trzeba zatrzymać (patrz "Jak zatrzymać agenta") i uruchomić
-ponownie (przyciskiem Run albo przez wylogowanie/zalogowanie) — plik jest wczytywany tylko
-przy starcie procesu.
+Provider IDs are `itaka`, `wakacje.pl`, `tui`, `rainbow` (keep disabled) and `mock`. With
+the committed values, ITAKA is scanned every 8-15 minutes (random range) and Wakacje.pl and
+TUI every hour. After a failure, the next attempt waits
+`interval_seconds * 2**failures` (exponent capped by `scheduler.max_backoff_exponent`).
 
-Jak to działa w praktyce:
+Settings read from `.env` or the Windows environment (Windows variables win):
 
-- **Poza godzinami aktywnymi** dostawcy (TUI, Wakacje.pl) **nie są odpytywani** — agent nic
-  nie pobiera z internetu.
-- **Komputer może pozostać włączony** przez cały ten czas — to nie problem.
-- Sam proces agenta **nadal działa**, tylko **czeka** (nic nie robiąc, w regularnych
-  krótkich odstępach sprawdza, czy weszliśmy już w godziny aktywne).
-- Gdy zegar wejdzie w okno aktywnych godzin, agent **wraca do normalnego działania** —
-  sam, bez potrzeby restartu.
-- Po wejściu w aktywne godziny agent wykonuje **jedno normalne sprawdzenie** zaległych
-  źródeł — **nie odpala serii zaległych skanów za całą noc**, nawet jeśli minęło wiele
-  godzin.
-- Jeśli komputer jest **wyłączony albo uśpiony**, agent w tym czasie **w ogóle nie działa**
-  (nie da się tego obejść — proces musi realnie działać, żeby cokolwiek sprawdzać).
-- Po ponownym zalogowaniu się do Windows, **Task Scheduler uruchomi agenta od nowa**
-  (patrz trigger "At log on" powyżej) i od razu, jeśli akurat jesteśmy w godzinach
-  aktywnych, wykona jedno sprawdzenie zaległych źródeł.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | unset | Telegram delivery; both or neither |
+| `TDA_CONFIG` | `config.json` | Configuration file, relative to the project folder |
+| `TDA_DATABASE` | `data/offers.sqlite3` | SQLite database path, relative to the project folder |
+| `TDA_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
+| `ITAKA_MAX_PAGES` | unset | Optional override of `providers.itaka.max_pages` |
 
-### Rozwiązywanie problemów
+## Telegram notifications
 
-- **Status po kliknięciu Run pozostaje "Ready" (nigdy nie zmienia się na "Running")**
-  Zwykle oznacza to, że sam program nie wystartował — najczęściej zła ścieżka w
-  "Program/script" albo w "Start in". Sprawdź dokładnie oba pola w zakładce Actions (patrz
-  krok 5 wyżej) i upewnij się, że wskazują istniejące ścieżki.
+Telegram is the notification channel. `TelegramNotifier` sends each alert through the
+official Bot API `sendMessage` call using the standard library; the token is never logged.
 
-- **Status szybko wraca z "Running" do "Ready"**
-  Program uruchomił się i od razu zakończył — zwykle błąd konfiguracji (np. uszkodzony lub
-  brakujący `config.json`/`.env`) albo literówka w argumentach (`-m travel_deal_agent
-  --watch`). Sprawdź `logs/agent.log` (patrz niżej) — jeśli plik jest pusty albo bardzo
-  stary, sprawdź w Task Schedulerze zakładkę **History** dla tego zadania — pokaże ona kod
-  zakończenia procesu nawet bez żadnego okna na ekranie.
+To obtain the two values:
 
-- **Brak logów / plik `logs\agent.log` się nie zmienia**
-  Upewnij się, że proces w ogóle działa (status **Running** w Task Schedulerze). Jeśli
-  status wraca do Ready, patrz punkt wyżej. Jeśli status pokazuje Running, ale plik mimo to
-  się nie zmienia po kilku minutach, sprawdź w Menedżerze zadań Windows, czy proces
-  `pythonw.exe` faktycznie jest widoczny na liście procesów.
+1. In Telegram, open **@BotFather**, send `/newbot` and follow the prompts. BotFather replies
+   with the **bot token**.
+2. Open a chat with your new bot and send it any message.
+3. In a browser, open `https://api.telegram.org/bot<your-bot-token>/getUpdates` and find
+   `"chat":{"id": ...}` -- that number is the **chat ID**. This URL contains your token; do
+   not share or screenshot it.
+4. Put both values in `.env` ([step E](#e-telegram-secrets)) and restart the agent. The log
+   should show `Notifications: telegram`.
 
-- **Komputer został uśpiony**
-  Agent w tym czasie nie działa (patrz sekcja "Godziny działania agenta" wyżej) — to
-  oczekiwane zachowanie, nie błąd. Po przebudzeniu i ponownym zalogowaniu Task Scheduler
-  uruchomi go od nowa dzięki triggerowi "At log on".
+A failed delivery never stops scanning: the notification stays in the SQLite outbox and is
+retried with bounded exponential backoff, and is abandoned (but kept for inspection) after
+a maximum number of attempts.
 
-- **Zmieniono lokalizację folderu projektu**
-  Trzeba ręcznie poprawić zadanie w Task Schedulerze: otwórz właściwości zadania →
-  zakładka **Actions** → edytuj akcję → zaktualizuj zarówno **Program/script** (nowa
-  ścieżka do `\.venv\Scripts\pythonw.exe`), jak i **Start in** (nowa ścieżka do folderu
-  projektu). Obie ścieżki muszą wskazywać na to samo, nowe miejsce.
-
-- **Usunięto lub odtworzono `.venv`**
-  Po ponownym utworzeniu środowiska wirtualnego upewnij się, że plik
-  `pythonw.exe` rzeczywiście istnieje pod ścieżką wpisaną w "Program/script"
-  (`<folder-projektu>\.venv\Scripts\pythonw.exe`). Jeśli `.venv` zostało odtworzone w innym
-  miejscu albo pod inną nazwą folderu, popraw tę ścieżkę w zadaniu tak samo, jak w punkcie
-  wyżej.
-
-## Example flow
-
-1. The mock adapter returns four fictional offers with future departure dates.
-2. Three pass the configured budget, hotel-star and trip filters.
-3. Matching trips are ranked; optional external verification remains disabled.
-4. SQLite records all observations and queues new matching-trip alerts.
-5. Local logs report three alerts. Repeating the same check produces no duplicate alerts:
-   an unchanged offer that is still present in the next scan is never re-sent.
-6. A later price drop against this exact offer's own previous observation, or against its
-   lowest price ever recorded, is a price event -- `price_drop` or `new_low` respectively (a
-   drop that is both is reported once, as `new_low`) -- once it clears the configured noise
-   floor (`price_drop_min_amount`/`price_drop_min_percent` in `config.json`: at least 50 PLN
-   or 5%, by default). A smaller drop, a higher price, or an unchanged price updates the
-   stored history but never queues a notification.
-7. An offer group that had no eligible observation for `alert_rearm_hours` (24 by default)
-   and then qualifies again is announced again, as a `returned` notification (not `new_offer`).
-
-Mock dates move daily; a different departure date represents a new trip. Single-check
-results contain offers from sources checked during that run, not a historical dashboard.
-
-## Tests and quality checks
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format --check .
-.\.venv\Scripts\python.exe -m mypy
-```
-
-Ruff checks imports, common errors, style and annotations. Mypy runs in strict mode on
-production code **and tests**. Formatting and lint configuration lives in `pyproject.toml`.
-Use `python -m ruff format .` to apply formatting during development.
-
-Tests cover policy boundaries, rating scales, ranking, duplicate detection, persistence
-across restarts, price changes, notification retries and source failure isolation.
-Tests use temporary SQLite databases, mock adapters and blocked socket access. They do
-not contact travel websites or Google. More detailed workflow rules are in `AGENTS.md`.
-
-`pytest -q` (`testpaths = ["tests"]`) is the production quality gate: it tests
-`travel_deal_agent` only. Files under `experiments/` (e.g. `rainbow_playwright/`,
-`itaka_playwright/`) may have their own offline tests next to the experimental code
-they cover, but those are not part of this gate and are not run by plain `pytest -q`;
-run them explicitly, for example `pytest experiments/rainbow_playwright -q` or
-`pytest experiments/itaka_playwright -q`.
-
-## Limitations and roadmap
-
-### Planned sources and rollout
-
-The four primary target sources are **ITAKA, Rainbow, Wakacje.pl and TUI**. The provider
-registry remains extensible to other agencies. ITAKA, Wakacje.pl and TUI are enabled in the
-committed `config.json`. TUI's native rating (TripAdvisor, confirmed 1-5 scale) is configured
-for ranking/attractiveness use, but still carries no hard rating threshold
-(`filters.provider_ratings.tui.enabled: false`) -- an MVP decision, not a missing scale; see
-`experiments/tui/CURRENT_STATE.md`. **Rainbow is blocked by
-source policy, not by implementation status** -- see "Rainbow listing provider" below.
-
-### Notification channels and content
-
-**Telegram is the primary notification channel for the MVP.** `TelegramNotifier` delivers the
-shared alert message to a chat through the official Telegram Bot API using a plain HTTP request
-(no third-party Telegram library). It activates when both `TELEGRAM_BOT_TOKEN` and
-`TELEGRAM_CHAT_ID` are set in the environment/`.env`; the application falls back to
-`ConsoleNotifier` (local logging to the console and the existing rotating log file) whenever
-either variable is missing, which keeps development, tests and console-only runs working
-unchanged. `LogNotifier` remains a compatibility alias for `ConsoleNotifier`. A Telegram delivery
-failure is isolated at the outbox boundary and never stops provider scanning; the notification
-stays pending and is retried on the next cycle. The bot token is never logged or included in
-error messages.
-
-Discord is the preferred channel under consideration for a possible future addition after the
-MVP (not yet implemented). WhatsApp is not planned; no automation of the WhatsApp application,
-official or unofficial, is implemented or planned. Any future `DiscordNotifier` or optional
-`EmailNotifier` implementation should implement
-`Notifier.send(notification)` and be injected at application composition, exactly like
-`TelegramNotifier` and `ConsoleNotifier`. They can use
-`NotificationMessage.from_notification(notification).render()` for the same content.
-Detection, price history and outbox retry logic require no transport-specific changes.
-The current outbox represents one selected transport, not simultaneous multi-channel delivery.
-
-Messages contain hotel, country/region, per-person price, total for the actual party
-(currently two travelers), price per person per night, duration, airport, stars, native rating
-and scale, verified Google/Tripadvisor rating, board, offer URL, a typical daytime temperature for
-the departure month (Climate V0, see below), an attractiveness category (see
-below), and, for a `price_drop`/`new_low` event, the offer's own previous observed price and the
-drop amount. `final_score` is never shown
-in the message (it still drives internal sorting only). Missing information is explicit. If total
-price is missing but party size and per-person price are known, the derived total is marked
-`calculated`. Final score and rating-scale maxima are persisted in the offer/outbox JSON **after**
-optional enrichment, so retries retain the original evaluation. Older snapshots remain readable
-and show unavailable score or unknown scale instead of guessing. When a confirmed booking total
-(mandatory operator fees included, e.g. TUI's TFG/TFP) or a known local mandatory cost is present
-on the offer, one additional 🧾 line per item is appended after the link/disclaimer lines.
-
-Example fictional message (compact Telegram format, `notification_content.NotificationMessage.render`):
+Example message (fictional offer):
 
 ```text
 🔥 NOWA • Szczególnie ciekawa
@@ -583,419 +541,126 @@ Example fictional message (compact Telegram format, `notification_content.Notifi
 ℹ️ Cena z listingu — niepotwierdzona.
 ```
 
-### Price events
+Price events add the previous price and the size of the drop. When a confirmed booking
+total includes mandatory operator fees or known local costs, they are listed on extra lines.
+Message content is transport-independent (`NotificationMessage`), so another channel
+(Discord is the preferred candidate after the MVP) would only need a new `Notifier`.
+WhatsApp is not planned.
 
-Besides a genuinely new eligible offer, the same compact format also reports what happened to
-an already-known offer's price -- a *price event*, tracked independently of attractiveness
-(HOT/GOOD/MATCH still answers "is this offer good"; a price event answers "did something just
-happen to its price"). `alerts.classify_alert` picks at most one event per observation, with
-`new_low` taking priority over `price_drop` when a single drop is both (never two messages for
-one scan):
+## Tests and quality
 
-| Header | Event | Meaning |
-| --- | --- | --- |
-| `🔥/👍/✓ NOWA` | `new_offer` | First eligible observation of this offer. |
-| `↩️ WRÓCIŁA` | `returned` | Eligible again after at least `alert_rearm_hours` with no eligible observation. |
-| `📉 SPADEK CENY` | `price_drop` | A meaningful drop from this offer's own previous observed price. |
-| `🏆 NAJNIŻSZA CENA` | `new_low` | A meaningful drop to a new lowest price ever recorded for this offer. |
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
+```
 
-"Meaningful" is a configurable noise floor (`price_drop_min_amount`/`price_drop_min_percent` in
-`config.json`; 50 PLN or 5%, whichever is reached first, by default) -- a 1 PLN drop, or a new low
-that only beats the old one by a few PLN, updates the stored history silently instead of paging
-the project owner. A price increase is likewise recorded in history but never notified.
+- 1400+ automated tests covering policy boundaries, rating scales, board rules, ranking,
+  deduplication, parsing of saved provider fixtures, price events, persistence across
+  restarts, notification retries, scheduling and provider failure isolation.
+- Tests never touch the network: sockets and browser start-up are blocked, SQLite
+  databases are temporary, and clocks and transports are injected.
+- mypy runs in strict mode on production code **and** tests; Ruff checks lint and
+  formatting (configuration in `pyproject.toml`).
+- `.github/workflows/quality.yml` runs the same checks on Windows and Linux with Python
+  3.10 and 3.14 when the repository is hosted on GitHub.
+- Files under `experiments/` are earlier reconnaissance and proofs of concept; they are not
+  part of the production package or of the `pytest -q` gate.
 
-An offer that disappears from a source is not currently detected or announced (`DISAPPEARED`):
-provider scans are staggered and independently retried on failure, so there is no safe "this
-source completed a full, successful scan" signal yet to tell a genuine disappearance apart from a
-transient miss (see `AGENTS.md`/project notes for the full reasoning). `returned` above only
-relies on the existing, already-safe per-offer re-arm window, not on scan completeness.
+## Troubleshooting
 
-The notification outbox retries a failed delivery with a bounded exponential backoff
-(`storage.NotificationRetryPolicy`: immediate on the first failure, doubling from the second
-consecutive one, capped, and abandoned -- never deleted -- after `max_attempts`), so a
-persistently broken transport (e.g. a revoked Telegram token) cannot grow the outbox's retry
-traffic without bound. There is still no dead-letter queue or delivery alerting beyond the log.
+- **Status stays Ready after Run, or returns to Ready quickly.** Check the task's
+  Program/script and Start in paths. A `Last Run Result` of `(0x2)` means a configuration
+  or command-line error. These errors happen **before** logging starts, so they are not in
+  `agent.log` and `pythonw.exe` shows nothing. End the task, then run
+  `.\.venv\Scripts\python.exe -m travel_deal_agent --watch` in a terminal to see the
+  message, fix it, press Ctrl+C and start the task again.
+- **`No module named travel_deal_agent`.** The Start in field is empty or points to the
+  wrong folder.
+- **TUI fails with a missing browser executable.** Run
+  `.\.venv\Scripts\python.exe -m playwright install chromium` as the same Windows user that
+  runs the task.
+- **`Notifications: console` although Telegram is configured.** Both variables must be set
+  in `.env` without a leading `#`, and the agent must be restarted.
+- **The log is not changing.** Confirm the task is Running and `pythonw.exe` is in Task
+  Manager. Outside active hours only short idle lines are written.
+- **Project folder moved or `.venv` recreated.** Update Program/script and Start in in the
+  task's Actions tab to the new paths.
 
-Protection against two `--watch` processes running at once against the same
-`data/offers.sqlite3` currently relies entirely on Windows Task Scheduler's own "Do not start a
-new instance" setting (see the Task Scheduler walkthrough above) -- the application itself holds
-no file lock and does not detect a second instance.
+## Known limitations
 
-### Climate V0
+- **Rainbow is blocked by source policy** (robots.txt) and stays disabled.
+- **Disappeared offers are not reported.** Scans are staggered and retried independently,
+  so there is no safe "complete successful scan" signal to tell a real disappearance from a
+  transient miss yet; `RETURNED` relies only on the per-offer re-arm window.
+- **Coverage is partial by design.** Each cycle reads a bounded number of pages and makes
+  few detail requests (for example one ITAKA/TUI price confirmation per cycle), so not
+  every offer of a source is seen or confirmed.
+- **Wakacje.pl prices are listing prices**, marked as unconfirmed in every message.
+- **Independent hotel ratings are not connected.** Google/Tripadvisor verification exists
+  only as an interface with offline placeholders; ratings come from each provider.
+- **Conservative deduplication.** The same trip sold by two providers, or with slightly
+  different hotel spelling, may produce separate alerts rather than risk merging different
+  trips.
+- **Local Windows deployment.** The agent runs only while the computer is on and the user
+  is signed in; there is no built-in single-instance lock (Task Scheduler provides it).
+- **At-least-once delivery.** A crash between sending a Telegram message and recording it
+  can repeat that message once.
+- **Climate data is static** and region-level; unrecognized destinations simply omit the
+  line.
+- **No schema migrations** beyond small in-place column additions; the database is a local
+  MVP store.
 
-`climate.py` adds the one-line `☀️` "typical daytime" temperature shown above: a **static**,
-**region-level** table of typical/average daily *maximum* temperature per month (never a forecast,
-a 24h mean, a nighttime value, or "feels like"), matched against `Offer.destination` through an
-explicit, hand-written alias list -- no fuzzy matching, no geocoding, no live weather API. A
-country-level fallback exists only for the handful of countries (Malta, Albania, Cyprus, Bulgaria)
-where every touristic destination this project has observed sits in one climatically uniform band;
-everywhere else (e.g. Spain, which spans both the seasonal mainland coast and the mild, near-constant
-Canary Islands) an unrecognized destination simply omits the line rather than showing a guess or a
-placeholder. Purely informational: it never affects filtering, eligibility, attractiveness
-(HOT/GOOD/MATCH), `final_score`, price history or alert classification.
+## Respectful access and safety
 
-### Attractiveness classification (V0)
+- `robots.txt` is fetched and honored before scanning; a missing or unreadable robots file
+  stops the cycle. Crawl-delay can only make requests slower.
+- Every provider has a request budget, a minimum gap between requests, a timeout and a
+  cycle deadline. Scan intervals are minutes to hours, not seconds.
+- HTTP requests identify themselves (`TravelDealAgent/0.1`), send no cookies and do not
+  follow redirects. The TUI browser session is fresh for each scan, headless, and only
+  navigates TUI's public pages.
+- HTTP 403/429, redirects, challenge pages or unexpected structure stop that provider's
+  cycle (fail closed); the project never bypasses CAPTCHAs, logins or robots rules.
+- No paid APIs, no credentials other than your own Telegram bot, and no personal data is
+  collected. Secrets live only in `.env`, which is excluded from Git together with
+  databases, logs and caches.
 
-`attractiveness.py` answers "is this offer good on its own, right now" -- a small,
-presentation-only classification shown in the message header, completely independent of
-`ranking.score`/`Offer.final_score` (which remains the existing internal sort order,
-untouched, and never shown to the recipient). It is computed fresh from the `Offer` on every
-render; it is never written to `Offer`, never persisted to SQLite, and never affects
-`filtering.matches()` -- an offer must already be eligible before it is classified.
+## Provider notes
 
-Four independent areas, each reduced to a simple level instead of a 0-100 score:
+**Wakacje.pl.** Reads listing pages over plain HTTP, without JavaScript. The adapter has no
+detail-confirmation stage, so its prices always stay unconfirmed; the source is explicitly
+listed in `filters.accept_incomplete_price_from` and its alerts carry the "unconfirmed"
+disclaimer.
 
-| Area | strong | normal | weak/neutral |
-| --- | --- | --- | --- |
-| VALUE (`price_per_person_per_night`, canonical nights only) | ≤ 170 PLN | ≤ 220 PLN | above 220 PLN |
-| HOTEL QUALITY (normalized provider rating; stars are a tie-breaker only) | ≥ 85% of scale | ≥ 75% of scale | below 75% (never lowered by missing reviews) |
-| AIRPORT | LCJ | WAW, WMI | KTW, WRO, ... (neutral, not a penalty) |
-| BOARD | AI, UAI | FB, HB | ZO, ... (neutral, not a penalty) |
+**ITAKA.** Reads the last-minute listing over HTTP, then a bounded number of public offer
+detail responses. A price is confirmed only when the detail data agrees with the listing
+on rate, hotel, dates, room, board, flights and two adults, and its booking total
+reconciles (base price plus mandatory TFG/TFP fees). Candidates that would fail any other
+hard filter never receive a detail request. Local costs such as taxes or visas are kept
+separately and never added to the price.
 
-Final category: `strong_count` = areas at `strong`; `weak_count` = areas at `weak` (AIRPORT/BOARD
-never contribute to `weak_count`). 🔥 **HOT** needs `strong_count >= 2` and `weak_count == 0` (a
-single strong area -- e.g. LCJ alone -- is never enough). 👍 **GOOD** needs `strong_count >= 1`
-and `weak_count <= 1`. ✓ **MATCH** is everything else that already passed eligibility.
+**TUI.** Opens a search results page in headless Chromium and passively reads TUI's own
+search responses, up to `max_pages`; it then opens the offer page of a small number of
+candidates to confirm real-time availability and price, including mandatory fees. Only
+confirmed offers are eligible; everything else fails closed. TUI's TripAdvisor rating
+(1-5) is used for ranking and attractiveness but has no hard threshold.
 
-All thresholds live in `config.json`'s `attractiveness` section (validated by
-`attractiveness.validate_attractiveness_config`) and are meant to be retuned once more real,
-cross-provider data exists -- these V0 values are calibrated on the 8 real eligible Wakacje.pl
-offers available at the time of writing, not on a larger or more diverse sample.
+**Rainbow.** Implemented and tested offline only; disabled because of robots.txt. It is
+not part of normal operation.
 
-- **Source integration:** investigate permitted official APIs/feeds before implementing
-  one live adapter. Add timeouts, request budgets, fixtures and caching. Never bypass CAPTCHA.
-- **Hotel identity:** current grouping uses hotel, location, dates, airport, party and board;
-  room/flight variants and spelling differences need stronger matching.
-- **Google enrichment:** add validated hotel matching, caching and request limits before
-  any real Google Maps/Reviews integration.
-- **Notifications:** the outbox retries failed deliveries. A crash after delivery but before
-  acknowledgement can repeat a message; future transports should use notification IDs
-  as idempotency keys.
-- **Operations:** add schema migrations when the database structure changes, then consider
-  a simple UI and Windows background-task setup if they become useful.
+Background notes from the investigation of each source are in
+`experiments/*/CURRENT_STATE.md`.
 
-No live scraping, API credentials, cloud deployment or GitHub publication is required
-for the current offline application.
+A `Dockerfile` and `docker-compose.yml` are also included as an optional container
+setup (Playwright base image, `--watch`, bind-mounted `data/` and `logs/`); the Windows
+Task Scheduler setup above is the documented primary deployment.
 
+## Project status
 
-## ITAKA adapter
-
-ITAKA is **enabled in the committed `config.json`** (`providers.itaka.enabled: true`),
-following offline and controlled live verification. Listing-only records
-have `price_is_complete=false`. A public detail response may confirm the same available
-two-adult variant and its full operator booking price, allowing the existing filters,
-ranking and local alerts to process it. Unverified records remain diagnostic.
-Local taxes, visas and other costs outside the operator booking are reported separately.
-
-Continuous unattended operation (`--watch`) is not CLI-rejected for ITAKA specifically:
-its confirmed operator booking price (`price_is_complete=true`) already satisfies the
-project's binding price-completeness rule (see
-`experiments/rainbow_playwright/CURRENT_STATE.md`). Its cadence uses a conservative
-`interval_min_seconds`/`interval_max_seconds` range (480-900 seconds) so requests are not
-perfectly periodic. Rainbow remains CLI-rejected under `--watch` unconditionally, because
-its own price completeness is still unresolved. No live request is part of the offline test
-suite; successful offline checks do not prove that today's website has the same schema
-or permits access.
-
-Access uses ordinary HTTP with an identifying user agent, no cookies, redirects or JS:
-
-1. Fetch `/robots.txt`; missing, malformed or unsuccessful responses stop the cycle.
-   The conservative policy honors the union of all Disallow rules, including wildcard
-   and terminal patterns, without Allow exceptions; this may reject otherwise allowed access.
-2. Fetch `/last-minute/`, `?page=N` and a bounded number of linked `/wczasy/` detail
-   pages on the same HTTPS host. Check robots for each requested URL. No API, static
-   Next.js route, reservation or CAPTCHA workaround is used.
-3. Read `script#__NEXT_DATA__`, the `rates` query under
-   `props.pageProps.initialQueryState.queries`, and
-   `state.data.main.multiRoomRates.list`. Validate `skip`, `take`, `ratesCount`;
-   repeated variants, ignored pagination and inconsistent pages are errors.
-4. Normalize supported two-adult, one-room flight/hotel/flight packages. Unknown
-   countries, airports, meals and star codes remain unknown. Unsupported records are
-   logged and skipped; an entirely unreadable nonempty page fails the cycle.
-5. Decode embedded `self.__next_f.push` JSON/text data without executing scripts.
-   Resolve data references and require agreement on rate ID, hotel, stay, room, meal,
-   both direct flights, two adults and `saleStatus=available`. Reconcile participant,
-   group and displayed booking totals. Conflicting or unsupported details stay diagnostic.
-
-No departure dates or destinations are hard-coded into queries. Airport and
-nullable `min_nights`/`max_nights` rules are local filters, applied against nights
-computed from `departure_date`/`return_date`. The default last-minute
-listing is only partial coverage of ITAKA inventory; source-side filter parameters
-are not assumed. Listing duration is the provider's trip days, not hotel nights.
-Return date comes from the arrival-home flight, which can be later than hotel checkout.
-
-`max_pages` defaults to 2; `ITAKA_MAX_PAGES` can override it with a positive integer.
-Set JSON `max_pages` to null for traversal until the listing ends, still bounded by
-`max_requests` (default 4: 1 robots.txt + up to 2 listing pages + up to 1 detail
-request), `cycle_seconds` (60), `timeout_seconds` (15) and `request_gap_seconds` (5).
-`config.py::validate_options` rejects a `max_requests` too small to cover
-`1 + max_pages + max_detail_requests` whenever `max_pages` is a concrete number (not
-null); increase `max_requests` deliberately when raising either limit. A robots crawl
-delay can increase the gap. Socket timeout is an inactivity limit; the cycle deadline
-is checked between requests and after reads, not a hard process cancellation timer.
-Responses are limited to 4 MB. A policy failure (HTTP 403/429/5xx, a redirect, or a
-robots/challenge-shaped response) still stops the whole cycle without any retry, same
-as before. A genuinely transient network error (a socket timeout or DNS/connection
-failure, never a policy failure) instead stops just that request -- keeping every
-offer already parsed from earlier pages, or leaving one candidate's price diagnostic
-if it happens on the detail request -- the same distinction `wakacje.py` documents and
-applies. The scheduler retains its deterministic error backoff regardless of whether
-ITAKA runs once (`--force`) or continuously (`--watch`, once deliberately enabled) —
-see "Configuration" above for `interval_min_seconds`/`interval_max_seconds`.
-
-`max_detail_requests` defaults to 1 (0 disables detail checks). Details are checked
-after each listing page, within the same budget; with the default budget above, one
-listing page's worth of pagination and one detail confirmation are both reachable in
-the same cycle. A candidate only ever receives a detail request if it would already
-pass every hard filter from listing-only data (price, airport, stars, rating band and
-board -- everything `filtering.matches_criteria` checks except price completeness,
-which only a detail request itself can establish; reused as-is, no separate scoring or
-classification). A candidate that is already ineligible is skipped outright, never
-"tried anyway" -- if nothing on the page qualifies, zero detail requests are made that
-page, and every listing offer stays `price_is_complete=False`. Among several still-
-eligible candidates, the request goes to whichever is first in the listing's own order
-(never reordered by price or anything else). Exhausted budgets leave the remaining
-offers diagnostic. Changing listing counts or repeated variants are errors; this does
-not guarantee a stable inventory snapshot across multiple pages.
-
-`package_price` is the base price for the entire party. `operator_mandatory_fees`
-contains mandatory group-level fees, currently the observed TFG and TFP types.
-`booking_total_price = package_price + sum(operator_mandatory_fees)`.
-`total_price` retains that same booking amount and `price_per_person` is its half.
-The PLN 1500 budget, meal/rating rules, ranking and price-drop alerts all use this
-booking price per person. `price_is_complete=true` confirms the operator booking,
-not the absence of every possible travel expense.
-
-Listing amounts are integer grosze; detail amounts are currency units. Decimal
-arithmetic reconciles both representations. Group and participant fee arrays are
-alternative presentations of the same fees and are never added twice. Missing arrays,
-unknown/duplicate fee types, currency or amount disagreements prevent confirmation.
-New mandatory operator fee types need independently verified semantics before support.
-
-`local_mandatory_costs` preserves descriptions and applicability conditions, with
-`exact`, `approximate` or `unknown` certainty. An empty list means no data, not zero
-cost. Local costs never affect booking-price completeness or eligibility. The initial
-extractor recognizes tax/mandatory-fee and paid-visa practical-information entries,
-retains source wording, and does not infer tax categories, convert currencies or
-interpret approximate charges as exact. It is not an exhaustive travel-cost service.
-
-Identity hashes the opaque `rateId` together with hotel, dates, flight endpoints/times,
-room/base-room, meals, currency and participants, excluding prices. Changed identities
-split history rather than guessing a match; stability of `rateId` across repricing is
-unproven. Raw segment fields are retained in the identity, including unmodeled flight/room dimensions; volatile changes may conservatively split history. Dimensions absent from the listing still need live verification.
-The existing identity algorithm and duplicate keys are unchanged. Detail enrichment
-does not replace IDs with flight-detail hashes. Existing snapshots deserialize with
-defaults, retain their historical completeness status and keep their first-seen dates
-and alert baselines. The first confirmed eligible observation may generate a first
-alert; repeated confirmation alone never creates a new offer or price-drop alert.
-Hotel codes 30/40/50 map to 3/4/5 stars (source assessment, not a verified local category).
-`reviews.customersRating` stays on ITAKA's native 1–6 scale;
-`reviewsNumber` is retained. No component-rating averaging is performed.
-
-## TUI listing provider
-
-TUI is **enabled in the committed `config.json`** (`providers.tui.enabled: true`). It
-observes TUI's own search/offer JSON responses passively during ordinary Playwright page
-navigation (never calling the underlying API directly), then, for a small budget of
-candidates each cycle (`max_detail_requests`, currently 1), opens the offer's own detail
-page to confirm real-time availability and price. A confirmed charter-flight package tour
-sets `price_is_complete=true`, including the operator's TFG+TFP mandatory fees; every other
-outcome (not yet confirmed, sold out/unavailable, a non-charter package, or a fee that
-disagrees with the confirmed rate) fails closed and keeps `price_is_complete=false`.
-
-TUI's only native rating is TripAdvisor (confirmed 1-5 scale from captured production
-data); it is configured for ranking/attractiveness (`filters.provider_ratings.tui.scale`)
-but has no hard rating threshold (`enabled: false`) -- an MVP decision, not a missing
-scale. TUI is **not** in `filters.accept_incomplete_price_from`, so (matching the
-project's default, strict policy) an unconfirmed TUI offer never reaches eligibility. In
-practice, with the current small per-cycle detail-confirmation budget and real offers
-changing availability between scans, none of the TUI offers observed so far have been
-confirmed complete -- expected behavior given the budget and timing involved, not a defect
-in the confirmation logic itself (see the offline TUI audit for the full reason
-breakdown). Whether to add TUI to `accept_incomplete_price_from`, matching Wakacje.pl's
-listing-price-plus-disclaimer policy, is a separate, deliberate business decision, not
-made by this change.
-
-## Meals and configurable quality rules
-
-`filters.board_price_bands` applies to confirmed final `price_per_person` in the
-configured currency (PLN), including mandatory operator booking surcharges and excluding
-separately reported local costs:
-
-| Final price per person | Minimum board |
-| --- | --- |
-| Below PLN 1000 | BB |
-| PLN 1000 through PLN 1500 inclusive | HB |
-
-FB, AI and UAI satisfy both meal bands, but still need to pass every other hard filter,
-including the overall price cap. ZO only satisfies the below-PLN-1000 band (it ranks above
-BB but below HB, so the PLN 1000-1500 band's HB minimum still rejects it). `filters.allowed_boards`
-remains an additional whitelist; it cannot replace the price-band requirement. RO,
-self-catering, unknown and ambiguous meal data fail the hard filter. `boards.py`
-normalizes names separately from source codes; an unknown ITAKA code requires an
-unambiguous full name, and conflicting known code/name pairs are rejected.
-
-Incomplete prices are rejected before choosing a meal band. For example, PLN 980 base
-plus PLN 20 mandatory fees is PLN 1000 final: BB fails and HB meets the meal requirement.
-The filter never adds fees again or uses a base price; source adapters must supply the
-final amount and confirm its completeness. ITAKA diagnostic quotes remain ineligible.
-Band boundaries use Decimal, and configuration validation rejects gaps, overlaps,
-unknown minimum meals and incomplete coverage of the configured budget.
-
-`ranking.board_scores` and the `board` weight reward BB < ZO < HB < FB < AI < UAI.
-Country overrides use uppercase alpha-2 codes (plus XK) in configuration, not a
-hard-coded country list in filtering logic. The default includes all 54 African
-states and the requested European exceptions. Independent parameterized tests cover
-both rejection at 3 stars and acceptance at 4, default and configurable overrides,
-meal normalization, unknown meals, meal ranking, and the Warsaw airport tie.
-
-
-
-## Independent external hotel ratings
-
-External verification supports independently injected `ExternalHotelRatingProvider`
-implementations. `GoogleRatingProvider` and `TripadvisorRatingProvider` are offline
-placeholders returning no result; neither performs network access, scraping or paid API
-calls. The global switch remains disabled by default. Adding a source requires its
-adapter, an `external_verification.sources` policy, and injection through the pipeline
-or scheduler's `external_providers` argument; the travel-source adapters stay independent.
-
-The sequence is hard filtering, deduplication, preliminary ranking, verification of at
-most `max_candidates` unique offers, then final ranking and persistence. Each enabled
-source is called at most once per selected offer per cycle. This is a candidate budget,
-not a shared request budget: N candidates and S enabled sources allow up to N*S adapter
-calls. Future live adapters must implement their own request budgets, timeouts and cache.
-Source failures and missing matches are isolated and never change hard eligibility.
-
-Every accepted `ExternalHotelRating` stores source, native rating and scale bounds,
-review count (nullable), matched name, ISO country, optional location and external ID,
-confidence in [0,1], and ambiguity information. `Offer.hotel_ratings` holds accepted
-results by source; `external_verification_statuses` explains missing results. Ambiguous,
-low-confidence, wrong-source, wrong-scale and contradictory-location results are rejected.
-The initial matching policy conservatively requires exact names after Unicode/case/space
-normalization, matching country, and matching region when the offer provides one. Missing
-name/country prevents lookup. This intentionally rejects some aliases rather than merging
-different hotels; a future matching layer may add independently tested geographic aliases.
-Confidence is supplied by an adapter and checked against the configured threshold; a high
-confidence value never overrides ambiguity or contradictory identity evidence.
-
-Each source configures `enabled`, `scale`, `min_confidence`, `rating_weight` and
-`reviews_weight`. Ratings retain their native scales and normalize only for ranking;
-review counts use the existing logarithmic cap. Missing sources contribute zero, and no
-cross-source average is invented. External evidence is cleared before preliminary ranking
-to prevent old enrichment from selecting its own shortlist. The former top-level external
-`scale` and Google ranking weights remain for legacy snapshots; new verified results use
-per-source policies without double-counting legacy Google fields.
-
-Presentation includes both sources, independently, for example:
-`ITAKA: 5.3/6 | Google: brak danych | Tripadvisor: 4.5/5`.
-SQLite and notification snapshots preserve full result metadata, so rendering retries uses
-the original scales and ratings. Existing Google-only snapshots remain readable. No live
-Google or Tripadvisor verification has been performed.
-
-## Rainbow listing provider
-
-**Status: BLOCKED BY SOURCE POLICY. Implementation prepared offline; do not enable.**
-`r.pl/robots.txt` explicitly disallows the `/szukaj?` path, and that path is required
-by the production Rainbow flow when filters are applied. This project does not bypass
-`robots.txt`, does not run Playwright against a disallowed path, and does not call
-undocumented internal APIs as a workaround. `providers.rainbow.enabled` must stay
-`false` until this is reconsidered. The code below is retained (not deleted) so the
-adapter is ready to enable without rework if the source's robots policy changes or a
-documented, allowed access path (e.g. an official API or a permitted listing path)
-becomes available. Until then, no live Rainbow run -- manual or scheduled -- is
-authorized.
-
-Rainbow is registered under `rainbow` and disabled by default. It uses a fresh,
-bounded Chromium session, normalizes listing cards into `Offer`, then leaves filtering,
-ranking, SQLite history, scheduling and notifications to the existing application.
-The production adapter has been tested offline only; the earlier browser POC supplies
-locator evidence, not proof that this new adapter passes a live end-to-end check.
-
-`filters` is the single business-policy source: PLN 1500/person, five configured
-airports, no stay-length restriction, minimum 3 stars, HB/FB/AI, and Rainbow rating
-at least 5.0/6. The POC's PLN 2000 cap is not used. Two adults, no children, one room
-and unrestricted dates are verified from the fresh search state. The current browser
-translation supports the five observed airport labels, minimum 3/4/5 stars, and
-HB/FB/AI/BB meal controls. When both `min_nights`/`max_nights` are configured, they
-must translate to one of the three observed day presets (7–9 / 10–13 / 14–17 dni);
-when both are `null` (the current business rule), Rainbow's own duration filter is
-left untouched, which already means every length. Airport and star selections that
-are not fully supported fail configuration rather than silently weakening criteria;
-a configured board with no confirmed Rainbow checkbox (for example "ZO", added to
-the shared list for ITAKA) is simply not selected there instead of blocking Rainbow
-entirely -- `filtering.matches_criteria` remains the acceptance authority, and
-Rainbow's own board mapping has no way to produce that board regardless. Native
-rating bands are reapplied by the shared filters; the browser selects an available
-floor no stricter than those bands.
-
-Rainbow star codes are explicit: 3 → `6`, 4 → `8`, 5 → `10`. A minimum selects every
-supported checkbox at or above it, through associated labels with checked-state
-verification. The airport panel commits via **Wybierz**; sidebar changes apply
-automatically. There is no final filter-submit click. Sorting is verified in the UI
-and URL without clicking when already ascending. Waits use expected query values,
-absent listing skeletons and stable result signatures, with bounded condition polling
-and a scan deadline. An explicit empty state succeeds even when the sorting UI is absent;
-recommendation cards below that state are never collected.
-
-`providers.rainbow` controls:
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `enabled` | `false` | Explicit opt-in; no browser starts during configuration or registry construction |
-| `interval_seconds` | `3600` | Existing scheduler due-time policy; no recurring Rainbow run is currently enabled |
-| `max_offers` | `10` | Unique, parseable listing candidates returned, not guaranteed eligible bookings |
-| `max_analyzed_cards` | `15` | Hard analysis budget; duplicates count toward it |
-| `max_scrolls` | `0` | No scroll by default; a positive limit permits bounded lazy-loading attempts |
-| `timeout_seconds` | `20` | Per-operation maximum |
-| `cycle_seconds` | `180` | Cooperative scan deadline checked between browser operations |
-| `debug` | `false` | Opt-in successful-scan HTML/screenshot diagnostics |
-
-Collection stops when either card/offer budget is reached, when the first sorted price
-exceeds the configured cap, when the initial batch ends with no allowed scroll, or on
-no progress. It does not paginate, visit offer details or relax filters. An explicit
-empty listing returns `[]` normally: the scheduler resets failure backoff and schedules
-the normal interval, without an immediate retry. Browser failures, timeouts, changed
-structure and access blocks raise separate Rainbow exception types and are logged at
-the source boundary. SQLite errors remain outside that boundary. A scan deadline
-reached mid-collection or mid-enrichment, after at least one offer was already
-collected, keeps those offers instead of discarding the whole cycle; a deadline
-reached before any offer is collected still fails the cycle, since there is nothing
-valid to keep. Access blocks and structural errors never trigger this partial-result
-path and always fail the whole cycle, with no automatic retry.
-
-Listing-only Rainbow records deliberately have `price_is_complete=false` and
-`variant_verified=false`. Total price is a diagnostic `price_per_person × 2` estimate,
-not a verified booking total. Missing return date remains `None`; departure time is
-not exposed by the observed cards or added to the shared model. A product URL is not
-promoted to a variant URL. Airport/meal summaries containing `(+N)` are retained in
-`price_notes`, while the corresponding normalized fields remain unknown. Country
-labels outside the adapter's explicit map also remain unknown.
-
-An identity hash tracks the observed product/date/party/location/meal/airport summary,
-excluding price and rating. It is a **listing observation identity**, not a verified
-flight/room variant ID; changed summaries conservatively split history. The existing
-pipeline stores these quotes and price changes as ineligible observations. They do
-not trigger deal alerts or enter the eligible ranking until missing variant/price
-evidence is verified. The shared ranking, including the configurable Łódź preference,
-is unchanged; the provider does not favor an airport by dropping other candidates.
-
-Normal scans log counts only. Errors (or explicit debug mode) save one capped HTML
-snapshot and one viewport screenshot under ignored `data/rainbow-production/`.
-No existing POC artifacts or databases are deleted. Automatic diagnostic retention
-is not implemented. The default collection covers the first rendered batch only,
-which can be smaller than `max_analyzed_cards`.
-
-Playwright's Python dependency is installed with the application. Chromium must be
-installed separately before a future authorized manual live check:
-`python -m playwright install chromium`. Nothing is downloaded or launched by the
-offline tests. Tests also block browser startup to prevent accidental network use.
-The CLI rejects `--watch` when Rainbow is enabled. No live Rainbow run is part of
-implementing or testing this adapter.
-
-Implementation modules: `providers/rainbow.py` (collection), `rainbow_config.py`
-(configuration translation), `rainbow_data.py` (pure parser), `rainbow_browser.py`
-(browser lifetime and UI), and `rainbow_errors.py` (failure types). Offline tests use
-a reduced authorized POC fragment and injected browser/session/clock dependencies.
-
-
+Feature-complete MVP, running unattended on a local Windows machine with three active
+providers (Wakacje.pl, ITAKA, TUI) and Telegram notifications. Possible next steps:
+reporting disappeared offers once scan completeness can be proven, a verified independent
+hotel-rating source, stronger cross-provider trip matching, and Discord as a second
+channel.

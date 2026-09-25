@@ -10,7 +10,8 @@ from pydantic import Field, field_validator
 
 from ..boards import normalized_text
 from ..models import LocalMandatoryCost, Offer, OperatorFee
-from .itaka_data import AIRPORTS, Boundary, Named, Rate, mapping
+from .boundary import Boundary, mapping
+from .itaka_data import AIRPORTS, Named, Rate, Segment
 from .itaka_rsc import FlightData
 
 
@@ -100,14 +101,16 @@ class FlightPoint(Boundary):
     carrierCode: str = Field(min_length=1)
 
 
-def unique_object(data: FlightData, candidates: list[dict[str, object]]) -> dict[str, object]:
-    resolved = [mapping(data.resolve(candidate)) for candidate in candidates]
+def unique_object(evidence: FlightData, candidates: list[dict[str, object]]) -> dict[str, object]:
+    resolved = [mapping(evidence.resolve(candidate)) for candidate in candidates]
     if not resolved or any(item != resolved[0] for item in resolved[1:]):
         raise ValueError("Missing or conflicting detail evidence")
     return resolved[0]
 
 
-def map_multiroom_fields(data: FlightData, expected_id: str, selected: dict[str, object]) -> None:
+def map_multiroom_fields(
+    evidence: FlightData, expected_id: str, selected: dict[str, object]
+) -> None:
     """Map observed aliases and single-group context for the already selected rate.
 
     Do not infer rateType or complete flights from a departure or a mixed summary.
@@ -122,14 +125,14 @@ def map_multiroom_fields(data: FlightData, expected_id: str, selected: dict[str,
             )
         target[field] = value
 
-    for obj in data.objects():
+    for obj in evidence.objects():
         if obj.get("rateId") == expected_id and "supplierObjectId" in obj:
-            put(selected, "supplierObjectId", data.resolve(obj["supplierObjectId"]))
+            put(selected, "supplierObjectId", evidence.resolve(obj["supplierObjectId"]))
         if obj.get("id") == expected_id:
             for source, field in (("mainRoom", "room"), ("mainMeal", "meal")):
                 if source not in obj:
                     continue
-                named = mapping(data.resolve(obj[source]))
+                named = mapping(evidence.resolve(obj[source]))
                 if "roomId" in named and "id" in named and named["roomId"] != named["id"]:
                     raise ValueError(f"Conflicting room aliases for rate_id={expected_id!r}")
                 value = {"id": named.get("id", named.get("roomId")), "title": named.get("title")}
@@ -137,17 +140,17 @@ def map_multiroom_fields(data: FlightData, expected_id: str, selected: dict[str,
         groups = obj.get("participantGroups")
         if not isinstance(groups, list) or len(groups) != 1:
             continue
-        group = mapping(data.resolve(groups[0]))
+        group = mapping(evidence.resolve(groups[0]))
         if group.get("id") != expected_id:
             continue
         for field in ("beginDate", "endDate", "duration"):
             if field in obj:
-                put(selected, field, data.resolve(obj[field]))
+                put(selected, field, evidence.resolve(obj[field]))
         totals: list[object] = []
         if "priceWithAdditionalPayments" in obj:
-            totals.append(data.resolve(obj["priceWithAdditionalPayments"]))
+            totals.append(evidence.resolve(obj["priceWithAdditionalPayments"]))
         if "price" in obj:
-            price = mapping(data.resolve(obj["price"]))
+            price = mapping(evidence.resolve(obj["price"]))
             if "totalWithAdditionalPayments" in price:
                 totals.append(price["totalWithAdditionalPayments"])
         for total in totals:
@@ -156,7 +159,7 @@ def map_multiroom_fields(data: FlightData, expected_id: str, selected: dict[str,
             selected["price"] = price
 
 
-def select_variant(data: FlightData, expected_id: str) -> Variant:
+def select_variant(evidence: FlightData, expected_id: str) -> Variant:
     """Select only evidence for the requested rate, including participant groups.
 
     Same-rate fragments may supply missing fields, never conflicting values.
@@ -164,16 +167,16 @@ def select_variant(data: FlightData, expected_id: str) -> Variant:
     """
     selected: dict[str, object] = {}
     found: set[str] = set()
-    for obj in data.objects():
+    for obj in evidence.objects():
         if not any(key in obj for key in ("saleStatus", "transport", "price", "participants")):
             continue
-        identity = data.resolve(obj.get("id", obj.get("rateId")))
+        identity = evidence.resolve(obj.get("id", obj.get("rateId")))
         if not isinstance(identity, str):
             continue
         found.add(identity)
         if identity != expected_id:
             continue
-        candidate = mapping(data.resolve(obj))
+        candidate = mapping(evidence.resolve(obj))
         candidate["id"] = identity
         for field in Variant.model_fields:
             if field not in candidate:
@@ -191,7 +194,7 @@ def select_variant(data: FlightData, expected_id: str) -> Variant:
             f"Detail variant does not match listing; rate_id: "
             f"listing={expected_id!r}, detail={detail!r}"
         )
-    map_multiroom_fields(data, expected_id, selected)
+    map_multiroom_fields(evidence, expected_id, selected)
     try:
         return Variant.model_validate(selected)
     except ValueError as exc:
@@ -211,19 +214,19 @@ def fee_totals(fees: list[Fee], currency: str) -> dict[str, Decimal]:
     return result
 
 
-def local_costs(data: FlightData, url: str | None) -> list[LocalMandatoryCost]:
+def local_costs(evidence: FlightData, url: str | None) -> list[LocalMandatoryCost]:
     """Preserve source descriptions and conditions; never infer zero or convert currencies."""
     result: list[LocalMandatoryCost] = []
     seen: set[str] = set()
-    for obj in data.objects():
+    for obj in evidence.objects():
         if "descriptionShort" not in obj or "title" not in obj:
             continue
         title = obj["title"]
         if not isinstance(title, str):
             continue
         try:
-            short = data.resolve(obj["descriptionShort"])
-            long = data.resolve(obj.get("descriptionLong"))
+            short = evidence.resolve(obj["descriptionShort"])
+            long = evidence.resolve(obj.get("descriptionLong"))
         except (ValueError, KeyError, IndexError, TypeError):
             continue
         parts = [title, *(v for v in (short, long) if isinstance(v, str))]
@@ -248,29 +251,67 @@ def local_costs(data: FlightData, url: str | None) -> list[LocalMandatoryCost]:
     return result
 
 
-def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
-    """Keep the exact legacy identity; enrich only after all booking checks pass."""
-    listing = Rate.model_validate(raw)
-    data = FlightData(html)
-    objects = data.objects()
-    expected_id = listing.participantGroups[0].rateId
-    variant = select_variant(data, expected_id)
-    costs = local_costs(data, offer.url)
-    party = variant.participants
-    outbound, hotel, inbound = listing.segments
-    room = hotel.participantGroups[0]
-    differences: list[str] = []
+class Differences:
+    """Remember the first listing/detail disagreement for the fail-closed error message."""
 
-    def mismatch(failed: bool, field: str, left: object, right: object, rule: str = "") -> bool:
-        if failed:
-            differences.append(
-                f"{field}: listing={left!r}, detail={right!r}" + (f"; rule={rule}" if rule else "")
+    def __init__(self) -> None:
+        self.first = ""
+
+    def found(
+        self, failed: bool, field: str, listing: object, detail: object, rule: str = ""
+    ) -> bool:
+        if failed and not self.first:
+            self.first = f"{field}: listing={listing!r}, detail={detail!r}" + (
+                f"; rule={rule}" if rule else ""
             )
         return failed
 
-    # Preserve short-circuit order and report the first failed condition.
+
+def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
+    """Keep the exact legacy identity; enrich only after all booking checks pass."""
+    listing = Rate.model_validate(raw)
+    evidence = FlightData(html)
+    rate_id = listing.participantGroups[0].rateId
+    variant = select_variant(evidence, rate_id)
+    costs = local_costs(evidence, offer.url)
+    require_variant_matches_listing(listing, variant, rate_id)
+    if variant.saleStatus != "available":
+        return replace(
+            offer,
+            sale_status=variant.saleStatus,
+            local_mandatory_costs=costs,
+            price_verification_reason="Variant is not available",
+        )
+    summary = booking_summary(evidence, listing, rate_id)
+    require_flights_match_listing(listing, variant, summary, raw)
+    package_price, fees, total = reconciled_booking_price(listing, variant, summary)
+    return replace(
+        offer,
+        package_price=package_price,
+        operator_mandatory_fees=[
+            OperatorFee(kind, amount, listing.currency) for kind, amount in sorted(fees.items())
+        ],
+        booking_total_price=total,
+        total_price=total,
+        price_per_person=total / 2,
+        price_is_complete=True,
+        variant_verified=True,
+        sale_status="available",
+        local_mandatory_costs=costs,
+        price_notes="Confirmed operator booking total; local costs are separate",
+        price_verification_reason="Listing and available detail variant agree; operator fees reconciled",
+    )
+
+
+def require_variant_matches_listing(listing: Rate, variant: Variant, rate_id: str) -> None:
+    """Check identity, party, dates, room and board; the first failed check is reported."""
+    party = variant.participants
+    hotel = listing.segments[1]
+    room = hotel.participantGroups[0]
+    differences = Differences()
+    mismatch = differences.found
     if (
-        mismatch(variant.id != expected_id, "rate_id", expected_id, variant.id)
+        mismatch(variant.id != rate_id, "rate_id", rate_id, variant.id)
         or mismatch(
             variant.supplierObjectId != listing.supplierObjectId,
             "hotel",
@@ -299,17 +340,9 @@ def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
             "listing must contain exactly 1 participant group",
         )
         or mismatch(
-            variant.beginDate != hotel.beginDate,
-            "dates.begin",
-            hotel.beginDate,
-            variant.beginDate,
+            variant.beginDate != hotel.beginDate, "dates.begin", hotel.beginDate, variant.beginDate
         )
-        or mismatch(
-            variant.endDate != hotel.endDate,
-            "dates.end",
-            hotel.endDate,
-            variant.endDate,
-        )
+        or mismatch(variant.endDate != hotel.endDate, "dates.end", hotel.endDate, variant.endDate)
         or mismatch(
             variant.duration.days != listing.duration.days,
             "duration.days",
@@ -317,10 +350,9 @@ def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
             variant.duration.days,
         )
         or mismatch(
-            variant.duration.nights
-            != (date.fromisoformat(hotel.endDate) - date.fromisoformat(hotel.beginDate)).days,
+            variant.duration.nights != stay_nights(hotel),
             "duration.nights",
-            (date.fromisoformat(hotel.endDate) - date.fromisoformat(hotel.beginDate)).days,
+            stay_nights(hotel),
             variant.duration.nights,
         )
         or mismatch(variant.room.id != room.room.id, "room.id", room.room.id, variant.room.id)
@@ -354,33 +386,33 @@ def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
             "normalized titles must match",
         )
     ):
-        raise ValueError("Detail variant does not match listing; " + differences[0])
-    if variant.saleStatus != "available":
-        return replace(
-            offer,
-            sale_status=variant.saleStatus,
-            local_mandatory_costs=costs,
-            price_verification_reason="Variant is not available",
-        )
+        raise ValueError("Detail variant does not match listing; " + differences.first)
 
-    summaries = [obj for obj in objects if "transportDetails" in obj and "rooms" in obj]
-    matching_summaries = [
+
+def stay_nights(hotel: Segment) -> int:
+    return (date.fromisoformat(hotel.endDate) - date.fromisoformat(hotel.beginDate)).days
+
+
+def booking_summary(evidence: FlightData, listing: Rate, rate_id: str) -> dict[str, object]:
+    """Return the single booking summary for this rate, room and one-room party."""
+    hotel = listing.segments[1]
+    room_id = hotel.participantGroups[0].room.id
+    candidates = [
         obj
-        for obj in summaries
-        if mapping(data.resolve(obj["rooms"])).get("offerIds") == [expected_id]
+        for obj in evidence.objects()
+        if "transportDetails" in obj
+        and "rooms" in obj
+        and mapping(evidence.resolve(obj["rooms"])).get("offerIds") == [rate_id]
     ]
-    summary = unique_object(data, matching_summaries)
+    summary = unique_object(evidence, candidates)
     rooms = mapping(summary["rooms"])
+    differences = Differences()
+    mismatch = differences.found
     if (
         mismatch(
-            rooms.get("offerIds") != [expected_id],
-            "room.offer_ids",
-            [expected_id],
-            rooms.get("offerIds"),
+            rooms.get("offerIds") != [rate_id], "room.offer_ids", [rate_id], rooms.get("offerIds")
         )
-        or mismatch(
-            rooms.get("ids") != [room.room.id], "room.ids", [room.room.id], rooms.get("ids")
-        )
+        or mismatch(rooms.get("ids") != [room_id], "room.ids", [room_id], rooms.get("ids"))
         or mismatch(
             summary.get("roomCount") != 1,
             "room.count",
@@ -389,104 +421,110 @@ def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
             "detail room count must be 1",
         )
     ):
-        raise ValueError("Conflicting room or offer identity; " + differences[0])
+        raise ValueError("Conflicting room or offer identity; " + differences.first)
+    return summary
+
+
+def require_flights_match_listing(
+    listing: Rate, variant: Variant, summary: dict[str, object], raw: dict[str, object]
+) -> None:
     flights = mapping(summary["transportDetails"])
     raw_segments = raw["segments"]
     if not isinstance(raw_segments, list):
         raise ValueError("Missing listing flight evidence")
-    for segment, journey, key, raw_segment in (
-        (outbound, variant.transport.outbound, "outbound", mapping(raw_segments[0])),
-        (inbound, variant.transport.inbound, "return", mapping(raw_segments[2])),
+    outbound, _, inbound = listing.segments
+    require_leg_matches_segment(
+        "outbound", outbound, variant.transport.outbound, mapping(raw_segments[0]), flights
+    )
+    require_leg_matches_segment(
+        "return", inbound, variant.transport.inbound, mapping(raw_segments[2]), flights
+    )
+
+
+def require_leg_matches_segment(
+    key: str,
+    segment: Segment,
+    journey: Journey,
+    raw_segment: dict[str, object],
+    flights: dict[str, object],
+) -> None:
+    """A leg must be one direct flight whose times, places and carrier agree everywhere."""
+    flight = mapping(flights[key])
+    start = FlightPoint.model_validate(flight["from"])
+    end = FlightPoint.model_validate(flight["to"])
+    detail = {"journey": journey.model_dump(), "from": start.model_dump(), "to": end.model_dump()}
+    differences = Differences()
+
+    def mismatch(failed: bool, condition: str) -> bool:
+        return differences.found(failed, f"{key}_flight.{condition}", raw_segment, detail)
+
+    if segment.beginTime is None or segment.endTime is None:
+        mismatch(True, "listing_times_present")
+        raise ValueError("Missing listing flight times; " + differences.first)
+    departure = datetime.fromisoformat(segment.beginDate + "T" + segment.beginTime)
+    arrival = datetime.fromisoformat(segment.endDate + "T" + segment.endTime)
+    if (
+        mismatch(journey.type != "flight", "type_is_flight")
+        or mismatch(not journey.isDirect, "is_direct")
+        or mismatch(departure.tzinfo is None, "departure_timezone_present")
+        or mismatch(arrival.tzinfo is None, "arrival_timezone_present")
+        or mismatch(arrival <= departure, "arrival_after_departure")
+        or mismatch(journey.id != start.place.code, "journey_id_matches_departure_code")
+        or mismatch(
+            datetime.fromisoformat(journey.beginDateTime) != departure, "journey_departure_time"
+        )
+        or mismatch(
+            datetime.fromisoformat(start.dateTime) != departure.replace(tzinfo=None),
+            "departure_time",
+        )
+        or mismatch(
+            datetime.fromisoformat(end.dateTime) != arrival.replace(tzinfo=None), "arrival_time"
+        )
+        or mismatch(segment.departure is None, "listing_departure_present")
+        or mismatch(segment.destination is None, "listing_destination_present")
+        or mismatch(
+            normalized_text(start.place.title)
+            != normalized_text(segment.departure.title if segment.departure else ""),
+            "departure_title",
+        )
+        or mismatch(
+            normalized_text(end.place.title)
+            != normalized_text(segment.destination.title if segment.destination else ""),
+            "destination_title",
+        )
+        or mismatch(
+            start.carrierFlightNumber != end.carrierFlightNumber, "detail_flight_numbers_agree"
+        )
+        or mismatch(start.carrierCode != end.carrierCode, "detail_carrier_codes_agree")
+        or mismatch(
+            any(
+                raw_segment[field] != start.carrierFlightNumber
+                for field in ("flightNumber", "carrierFlightNumber")
+                if raw_segment.get(field) is not None
+            ),
+            "listing_flight_number",
+        )
+        or mismatch(
+            raw_segment.get("carrierCode") is not None
+            and raw_segment["carrierCode"] != start.carrierCode,
+            "listing_carrier_code",
+        )
+        or mismatch(
+            start.place.title in AIRPORTS and AIRPORTS[start.place.title] != start.place.code,
+            "departure_airport_mapping",
+        )
+        or mismatch(
+            end.place.title in AIRPORTS and AIRPORTS[end.place.title] != end.place.code,
+            "destination_airport_mapping",
+        )
     ):
-        flight = mapping(flights[key])
-        start = FlightPoint.model_validate(flight["from"])
-        end = FlightPoint.model_validate(flight["to"])
+        raise ValueError("Conflicting or unsupported flights; " + differences.first)
 
-        def flight_mismatch(
-            failed: bool,
-            condition: str,
-            *,
-            key: str = key,
-            raw_segment: dict[str, object] = raw_segment,
-            journey: Journey = journey,
-            start: FlightPoint = start,
-            end: FlightPoint = end,
-        ) -> bool:
-            if not failed:
-                return False
-            return mismatch(
-                True,
-                f"{key}_flight.{condition}",
-                raw_segment,
-                {
-                    "journey": journey.model_dump(),
-                    "from": start.model_dump(),
-                    "to": end.model_dump(),
-                },
-            )
 
-        if segment.beginTime is None or segment.endTime is None:
-            flight_mismatch(True, "listing_times_present")
-            raise ValueError("Missing listing flight times; " + differences[0])
-        departure = datetime.fromisoformat(segment.beginDate + "T" + segment.beginTime)
-        arrival = datetime.fromisoformat(segment.endDate + "T" + segment.endTime)
-        if (
-            flight_mismatch(journey.type != "flight", "type_is_flight")
-            or flight_mismatch(not journey.isDirect, "is_direct")
-            or flight_mismatch(departure.tzinfo is None, "departure_timezone_present")
-            or flight_mismatch(arrival.tzinfo is None, "arrival_timezone_present")
-            or flight_mismatch(arrival <= departure, "arrival_after_departure")
-            or flight_mismatch(journey.id != start.place.code, "journey_id_matches_departure_code")
-            or flight_mismatch(
-                datetime.fromisoformat(journey.beginDateTime) != departure, "journey_departure_time"
-            )
-            or flight_mismatch(
-                datetime.fromisoformat(start.dateTime) != departure.replace(tzinfo=None),
-                "departure_time",
-            )
-            or flight_mismatch(
-                datetime.fromisoformat(end.dateTime) != arrival.replace(tzinfo=None), "arrival_time"
-            )
-            or flight_mismatch(segment.departure is None, "listing_departure_present")
-            or flight_mismatch(segment.destination is None, "listing_destination_present")
-            or flight_mismatch(
-                normalized_text(start.place.title)
-                != normalized_text(segment.departure.title if segment.departure else ""),
-                "departure_title",
-            )
-            or flight_mismatch(
-                normalized_text(end.place.title)
-                != normalized_text(segment.destination.title if segment.destination else ""),
-                "destination_title",
-            )
-            or flight_mismatch(
-                start.carrierFlightNumber != end.carrierFlightNumber, "detail_flight_numbers_agree"
-            )
-            or flight_mismatch(start.carrierCode != end.carrierCode, "detail_carrier_codes_agree")
-            or flight_mismatch(
-                any(
-                    raw_segment[field] != start.carrierFlightNumber
-                    for field in ("flightNumber", "carrierFlightNumber")
-                    if raw_segment.get(field) is not None
-                ),
-                "listing_flight_number",
-            )
-            or flight_mismatch(
-                raw_segment.get("carrierCode") is not None
-                and raw_segment["carrierCode"] != start.carrierCode,
-                "listing_carrier_code",
-            )
-            or flight_mismatch(
-                start.place.title in AIRPORTS and AIRPORTS[start.place.title] != start.place.code,
-                "departure_airport_mapping",
-            )
-            or flight_mismatch(
-                end.place.title in AIRPORTS and AIRPORTS[end.place.title] != end.place.code,
-                "destination_airport_mapping",
-            )
-        ):
-            raise ValueError("Conflicting or unsupported flights; " + differences[0])
-
+def reconciled_booking_price(
+    listing: Rate, variant: Variant, summary: dict[str, object]
+) -> tuple[Decimal, dict[str, Decimal], Decimal]:
+    """Return (package price, operator fees, booking total) once every source agrees."""
     price = variant.price
     currency = listing.currency
     group = listing.participantGroups[0]
@@ -499,48 +537,37 @@ def confirm_detail(offer: Offer, raw: dict[str, object], html: str) -> Offer:
     ]
     if any(m.currency != currency for m in amounts):
         raise ValueError("Inconsistent booking currencies")
-    base = sum((p.price.amount for p in price.participants), Decimal(0))
-    if base <= 0 or base != price.actualPrice.amount or base != Decimal(group.price) / 100:
+    package_price = sum((p.price.amount for p in price.participants), Decimal(0))
+    if (
+        package_price <= 0
+        or package_price != price.actualPrice.amount
+        or package_price != Decimal(group.price) / 100
+    ):
         raise ValueError("Conflicting package price")
     fees = fee_totals(price.additionalPayments, currency)
     participant_fees: dict[str, Decimal] = {}
-    for adult, original in zip(price.participants, group.participants, strict=True):
+    for adult, listed in zip(price.participants, group.participants, strict=True):
         if (
-            original.type != "adult"
-            or adult.price.amount != Decimal(original.price) / 100
-            or original.additionalPayments is None
+            listed.type != "adult"
+            or adult.price.amount != Decimal(listed.price) / 100
+            or listed.additionalPayments is None
         ):
             raise ValueError("Conflicting participant price")
-        current = fee_totals(adult.additionalPayments, currency)
-        original_fees = fee_totals(
+        detail_fees = fee_totals(adult.additionalPayments, currency)
+        listed_fees = fee_totals(
             [
                 Fee(type=p.type, amount=Money(amount=Decimal(p.amount) / 100, currency=currency))
-                for p in original.additionalPayments
+                for p in listed.additionalPayments
             ],
             currency,
         )
-        if current != original_fees:
+        if detail_fees != listed_fees:
             raise ValueError("Listing and detail fees disagree")
-        for kind, amount in current.items():
+        for kind, amount in detail_fees.items():
             participant_fees[kind] = participant_fees.get(kind, Decimal(0)) + amount
     if participant_fees != fees:
         raise ValueError("Group and participant fees disagree")
-    total = base + sum(fees.values(), Decimal(0))
+    total = package_price + sum(fees.values(), Decimal(0))
     if total != price.actualWithAdditionalPayments.amount or summary.get("totalPrice") != total:
         raise ValueError("Booking total does not reconcile")
-    return replace(
-        offer,
-        package_price=base,
-        operator_mandatory_fees=[
-            OperatorFee(kind, amount, currency) for kind, amount in sorted(fees.items())
-        ],
-        booking_total_price=total,
-        total_price=total,
-        price_per_person=total / 2,
-        price_is_complete=True,
-        variant_verified=True,
-        sale_status="available",
-        local_mandatory_costs=costs,
-        price_notes="Confirmed operator booking total; local costs are separate",
-        price_verification_reason="Listing and available detail variant agree; operator fees reconciled",
-    )
+    return package_price, fees, total

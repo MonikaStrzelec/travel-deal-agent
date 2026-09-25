@@ -14,12 +14,12 @@ from travel_deal_agent.models import Offer, duplicate_key
 from travel_deal_agent.notification_content import NotificationMessage
 from travel_deal_agent.notifications import LogNotifier, Notifier
 from travel_deal_agent.providers.base import Provider
-from travel_deal_agent.providers.http import Response
 from travel_deal_agent.providers.tui import TuiProvider
 from travel_deal_agent.providers.tui_data import normalize_offer
 from travel_deal_agent.ranking import deduplicate
 from travel_deal_agent.scheduler import Scheduler
 from travel_deal_agent.storage import Store
+from tui_support import NOT_AVAILABLE_BODY, FakeTransport, robots_response
 
 NOW = datetime(2026, 9, 22, tzinfo=timezone.utc)
 CONFIG: ProviderConfig = {"enabled": True, "interval_seconds": 3600, "max_detail_requests": 1}
@@ -85,21 +85,6 @@ def charter_realtime_body(**overrides: object) -> str:
     }
     body.update(overrides)
     return json.dumps(body)
-
-
-NOT_AVAILABLE_BODY = json.dumps({"offerStatus": "NOT_AVAILABLE", "alternativeOffers": []})
-
-
-class FakeTransport:
-    def __init__(self, responses: list[Response]) -> None:
-        self.responses = responses
-
-    def get(self, url: str, timeout: float) -> Response:
-        return self.responses.pop(0)
-
-
-def robots_response() -> Response:
-    return Response(200, "User-agent: *\nDisallow: /api/", {})
 
 
 class FakeCapture:
@@ -194,9 +179,7 @@ def test_non_charter_confirmed_offer_never_reaches_eligibility(
     body["tags"] = ["FIRST_MINUTE"]
     body["analyticsData"]["values"]["flight_type"] = "LINE"
     provider = tui_provider(settings, json.dumps(body))
-    # Act
     result = run_tui_only(settings, store, provider)
-    # Assert
     assert result == []
     stored = store.get_offer("tui", str(RAW_OFFER["offerCode"]))
     assert stored is not None
@@ -255,9 +238,7 @@ def test_unknown_fee_field_never_reaches_eligibility(settings: Settings, store: 
     body = json.loads(charter_realtime_body())
     body["priceDetails"]["someNewMandatoryFee"] = 25
     provider = tui_provider(settings, json.dumps(body))
-    # Act
     result = run_tui_only(settings, store, provider)
-    # Assert
     assert result == []
     stored = store.get_offer("tui", str(RAW_OFFER["offerCode"]))
     assert stored is not None
@@ -277,8 +258,8 @@ def test_different_departure_dates_are_never_deduplicated_into_one_offer() -> No
     same_hotel_later_date["departureDate"] = "19.12.2026"
     same_hotel_later_date["returnDate"] = "26.12.2026"
 
-    first = normalize_offer(RAW_OFFER, NOW, source="search_xhr")
-    second = normalize_offer(same_hotel_later_date, NOW, source="search_xhr")
+    first = normalize_offer(RAW_OFFER, NOW)
+    second = normalize_offer(same_hotel_later_date, NOW)
 
     assert duplicate_key(first) != duplicate_key(second)
     assert len(deduplicate([first, second])) == 2

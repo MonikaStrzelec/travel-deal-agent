@@ -1,96 +1,71 @@
 """Wakacje.pl listing-only provider: HTTP GET, robots-checked, no Playwright.
 
-Confirmed offline (`experiments/wakacje_pl/RECONNAISSANCE.md` sec 3, 7, 9, 12): the
-listing page's embedded `__NEXT_DATA__` carries full, structured offer data via plain
-HTTP -- no client-side JS execution is required. The bare (query-less, robots-legal)
-detail page carries NO offer-specific data at all (sec 12.2), so unlike ITAKA's
-`itaka_details.py` there is no detail-confirmation stage here; `price_is_complete`
-stays `False` unconditionally (see `wakacje_data.normalize_offer`). This is no
-longer what keeps every Wakacje.pl offer out of an alert -- `filtering.matches()`
-accepts this provider's listing price via `filters["accept_incomplete_price_from"]`,
-a deliberate, per-provider business decision made once the price semantics were
-confirmed (see `wakacje_data.py` for the current, za-osobe-based semantics).
+The listing page's embedded `__NEXT_DATA__` carries full, structured offer data
+via plain HTTP -- no client-side JS execution is required. The bare (query-less,
+robots-legal) detail page carries no offer-specific data at all, so unlike
+ITAKA's `itaka_details.py` there is no detail-confirmation stage here;
+`price_is_complete` stays `False` unconditionally (see
+`wakacje_data.normalize_offer`). This is not what keeps every Wakacje.pl offer
+out of an alert -- `filtering.matches()` accepts this provider's listing price
+via `filters["accept_incomplete_price_from"]`, a deliberate, per-provider
+business decision made once the price semantics were confirmed (see
+`wakacje_data.py`).
 
-## The confirmed combined search query (sec 24-25, replacing the old per-airport flow)
+## The confirmed combined search query
 
-A real, human-driven browser session (Playwright Codegen, headed, manual clicks --
-not automated scraping) produced a single, site-generated search URL combining ALL
-of the following at once: flight-only transport, board types (AI/HB/ZO/FB), minimum
-3 stars, minimum rating 8.0, all four confirmed departure airports simultaneously,
-cheapest-first sort, and the per-person price view. This is a materially different
-(and better) architecture than the old one, which fetched an unfiltered baseline
-plus one separate request per confirmed airport under the site's default
-"most popular" sort -- that old approach could, and did, miss real, cheap,
-matching offers that this combined query surfaces directly, sorted ascending.
+This provider fetches a single, site-generated search query combining
+flight-only transport, board types (AI/HB/ZO/FB), minimum 3 stars, minimum
+rating 8.0, all four confirmed departure airports simultaneously,
+cheapest-first sort, and the per-person price view (`CONFIRMED_SEARCH_QUERY`
+below) -- one request surfacing results across every filter dimension at
+once, pre-sorted ascending, instead of one baseline plus one separate request
+per airport.
 
-The exact human-confirmed URL also included a price cap (`do-1500zl`). That token
-was excluded here: it matches `Disallow: /*?do-*` in the site's own robots.txt
-(confirmed offline against a freshly fetched robots.txt, not guessed -- the same
-rule that already made price-range filtering unusable in the old architecture,
-sec 8a.3). Dropping it changes nothing business-wise: the PLN 1500/person cap is,
-and always was, enforced client-side by `filtering.matches_criteria`, independent
+The confirmed URL also included a price cap (`do-1500zl`). That token is
+excluded here: it matches `Disallow: /*?do-*` in the site's own robots.txt.
+Dropping it changes nothing business-wise: the per-person price cap is, and
+always was, enforced client-side by `filtering.matches_criteria`, independent
 of what this provider fetches.
 
-The rest of the confirmed query (`CONFIRMED_SEARCH_QUERY` below) was verified with
-one additional, explicitly authorized live GET (robots.txt + this exact query,
-2 requests total): `200`, 10/10 offers sorted strictly ascending by price, and
-7 of 10 already at or under the PLN 1500/person business cap -- direct evidence
-this query reaches the previously-missed cheap offers the old architecture could
-not. It also surfaced `departurePlaceCode == "WMI"` (Warszawa-Modlin), an airport
-this provider could never reach before (no confirmed standalone slug existed for
-it) -- WMI is already a configured business airport (`filters.airports`), so this
-is a net gain, not a new eligibility question; `filtering.matches_criteria` handles
-it exactly like any other airport, no code change needed for that.
+The site-generated page-2 link for this query is `?str-2,<same query>` -- the
+same page-number-plus-filter comma shape already used for single-airport
+pagination. `robots_policy`'s `/*,*/ ` disallow rule does not match this
+shape: that rule requires a `/` after the comma, which this query string
+never has.
 
-The real, site-generated page-2 link for this exact query was found directly on
-the fetched page (not guessed): `?str-2,<same query>` -- the same
-page-number-plus-filter comma shape already established for the old per-airport
-pagination, now carrying the whole combined query instead of a single airport
-slug. `robots_policy`'s `/*,*/ ` disallow rule does not match this shape for the
-same reason it never did (sec 13b): that rule requires a `/` after the comma,
-which this query string never has.
-
-## Price semantics changed: this query returns price PER PERSON, not total
+## Price semantics: this query returns price PER PERSON, not total
 
 This query includes `za-osobe` (the site's own "average per person" price-view
-toggle). Confirmed directly (not inferred): the live-fetched offers' raw `price`
-field matched, PLN for PLN (to within ordinary live price drift), the per-person
-figures visibly labeled "średnia za osobę" on the real page during the same manual
-session that produced this query. This is the reverse of the old architecture's
-confirmed semantics (`totalPrice: true, pricePerPerson: false` by default) -- see
-`wakacje_data.py` for the corresponding parser change. Since this provider now
-always uses this one query, the parser's price handling is unconditional, not a
-per-call flag.
+toggle); the raw `price` field is per person, not the party total -- see
+`wakacje_data.py` for the corresponding parser handling. Since this provider
+always uses this one query, the parser's price handling is unconditional, not
+a per-call flag.
 
-This provider never opens a detail page, never uses Playwright, never calls an API
-endpoint directly. It combines multiple filter dimensions in one URL -- normally
-avoided in this project because robots.txt disallows comma-joined *category-path*
-segments (`/*,*/ ` with a trailing `/`) -- but this exact query string was itself
-confirmed, live, generated by the site's own UI and successfully fetched, and its
-comma-joined shape (all query-string, no further `/`) does not match that disallow
-rule either (same reasoning as the pagination shape above). `filtering.matches()`
-remains the sole authority for business eligibility; this query is an efficiency
-and relevance improvement (fewer requests, pre-sorted, pre-filtered close to the
-business rules), never a substitute for it.
+This provider never opens a detail page, never uses Playwright, never calls
+an API endpoint directly. It combines multiple filter dimensions in one URL --
+normally avoided in this project because robots.txt disallows comma-joined
+*category-path* segments (`/*,*/ ` with a trailing `/`) -- but this exact
+query string is itself site-generated, and its comma-joined shape (all
+query-string, no further `/`) does not match that disallow rule either (same
+reasoning as the pagination shape above). `filtering.matches()` remains the
+sole authority for business eligibility; this query is an efficiency and
+relevance improvement, never a substitute for it.
 
-Transient network resilience (RECONNAISSANCE.md sec 22-23, unchanged from the old
-architecture): a real full-provider live run once hit a `TimeoutError` from the
-underlying socket mid-scan. `fetch()` handles exactly two exception types locally,
-never more: the builtin `TimeoutError` (a real socket/SSL read timeout, as observed
-live) and `urllib.error.URLError` (DNS/connection-level failures) raised by a
-single `budget.get(...)` call -- never retried, matching this project's other
-adapters' "no automatic retry" policy. A transient error on any page stops further
-pagination but keeps every offer already parsed from earlier pages. Robots
-violations, non-200 statuses (403/429/redirects, surfaced by `RequestBudget.get()`
-as `ValueError`), request-budget/cycle-deadline exhaustion, and any schema/CAPTCHA-
-shaped parsing failure are never caught here -- they still fail the whole `fetch()`
-call, exactly as before.
+Transient network resilience: `fetch()` handles exactly two exception types
+locally, never more: the builtin `TimeoutError` (a real socket/SSL read
+timeout) and `urllib.error.URLError` (DNS/connection-level failures) raised by
+a single `budget.get(...)` call -- never retried, matching this project's
+other adapters' "no automatic retry" policy. A transient error on any page
+stops further pagination but keeps every offer already parsed from earlier
+pages. Robots violations, non-200 statuses (surfaced by `RequestBudget.get()`
+as `ValueError`), request-budget/cycle-deadline exhaustion, and any
+schema/CAPTCHA-shaped parsing failure are never caught here -- they still
+fail the whole `fetch()` call.
 
-Known limitation, not resolved this session: this exact query string's pagination
-was only directly confirmed for page 2 (the real on-page link). Pages 3+ extrapolate
-that confirmed `str-<n>,<query>` shape to further page numbers, the same convention
-already established (and never separately re-verified page-by-page) for the old
-per-airport pagination.
+Known limitation: this query string's pagination was only directly confirmed
+for page 2 (the real on-page link). Pages 3+ extrapolate that confirmed
+`str-<n>,<query>` shape to further page numbers, never separately
+re-verified page-by-page.
 """
 
 import logging
@@ -111,7 +86,7 @@ BASE = "https://www.wakacje.pl"
 LISTING_PATH = "/wczasy/"
 
 # The one confirmed, robots-legal combined search query (see module docstring for
-# the exact evidence trail). Order matches the human-confirmed URL exactly --
+# the exact evidence trail). Order matches the site-generated URL exactly --
 # nothing reordered, nothing added, nothing guessed:
 #   samolotem                            -- transportType: flight only
 #   all-inclusive,HB,ZO,FB               -- cateringList codes 1,2,5,6 (AI/HB/ZO/FB)
@@ -120,25 +95,19 @@ LISTING_PATH = "/wczasy/"
 #   z-katowic,z-lodzi,z-warszawy,z-wroclawia -- all 4 confirmed target airports at once
 #   tanio                                -- order: cheapest first
 #   za-osobe                             -- priceType: average per person
-# `do-1500zl` (price cap) was in the human-confirmed URL but is deliberately
-# excluded: it matches robots.txt's `Disallow: /*?do-*` (confirmed offline against
-# a freshly fetched robots.txt). The PLN 1500/person cap is enforced client-side by
-# `filtering.matches_criteria` regardless.
+# `do-1500zl` (price cap) was in the site-generated URL but is deliberately
+# excluded: it matches robots.txt's `Disallow: /*?do-*`. The per-person price cap
+# is enforced client-side by `filtering.matches_criteria` regardless.
 CONFIRMED_SEARCH_QUERY = (
     "samolotem,all-inclusive,HB,ZO,FB,3-gwiazdkowe,ocena-8,"
     "z-katowic,z-lodzi,z-warszawy,z-wroclawia,tanio,za-osobe"
 )
 
-# Only page 1 was fetched with this exact suffix during live confirmation; the
-# site's own real page-2 link omits it (evidently a UI-navigation tracking
-# parameter, not part of the actual filter/sort effect) -- each page uses exactly
-# what was confirmed for it, nothing inferred beyond that.
+# Only page 1 uses this exact suffix; the site's own real page-2 link omits it
+# (evidently a UI-navigation tracking parameter, not part of the actual
+# filter/sort effect) -- each page uses exactly what was confirmed for it,
+# nothing inferred beyond that.
 _PAGE_1_SUFFIX = "&src=fromFilters"
-
-
-# Re-exported for existing imports/tests (`from .wakacje import robots_policy`);
-# the implementation now lives in .robots, shared with itaka.py and tui.py.
-__all__ = ["robots_policy"]
 
 
 class WakacjeProvider(Provider):
@@ -156,7 +125,7 @@ class WakacjeProvider(Provider):
         self.configuration = configuration
         # `filters` is required (registry.py raises "requires shared business
         # filters" without it), matching every other provider's constructor
-        # contract, even though this provider's query is now a fixed, confirmed
+        # contract, even though this provider's query is a fixed, confirmed
         # constant rather than one derived from `filters["airports"]` --
         # eligibility is still decided solely by `filtering.matches()`.
         self.filters = filters

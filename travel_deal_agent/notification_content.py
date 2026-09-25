@@ -21,11 +21,8 @@ from .config_types import AttractivenessConfig, RatingRule
 from .models import Offer
 from .storage import Notification
 
-# Polish display names for the ISO codes this project's providers can produce.
-# Not guessed: the same evidence-backed names already used for display in
-# rainbow_data.COUNTRIES/tui_data.COUNTRIES (real Polish names observed on
-# real cards), just keyed by ISO code here instead of by source slug/label --
-# presentation only, this module never depends on provider internals.
+# The Polish names observed on real provider cards, keyed by ISO code so this
+# module never depends on provider internals.
 COUNTRY_NAMES_PL = {
     "TR": "Turcja",
     "GR": "Grecja",
@@ -40,10 +37,9 @@ COUNTRY_NAMES_PL = {
     "MT": "Malta",
 }
 
-# Canonical board codes only (`boards.CANONICAL_BOARDS`); any other value
-# (e.g. a provider-specific label that was never normalized) falls back to
-# being shown as-is, never guessed into one of these.
+# Canonical board codes only; any other value is shown as-is, never guessed.
 BOARD_LABELS_PL = {
+    "UAI": "Ultra All Inclusive (UAI)",
     "AI": "All Inclusive (AI)",
     "HB": "Śniadania i obiadokolacje (HB)",
     "FB": "Pełne wyżywienie (FB)",
@@ -62,10 +58,8 @@ WEEKDAYS_PL = (
     "niedziela",
 )
 
-# Compact display labels for this message, deliberately separate from
-# rainbow_config.AIRPORT_LABELS (which mirrors labels actually observed on
-# Rainbow's own site, e.g. "Warszawa Chopin", and must not be repurposed for
-# unrelated presentation elsewhere).
+# Deliberately separate from rainbow_config.AIRPORT_LABELS, which mirrors the
+# labels observed on Rainbow's own site.
 AIRPORT_DISPLAY_LABELS_PL = {
     "LCJ": "Łódź",
     "WAW": "Warszawa",
@@ -74,11 +68,8 @@ AIRPORT_DISPLAY_LABELS_PL = {
     "WRO": "Wrocław",
 }
 
-# (emoji override, Polish label) per outbox `kind`. `new_offer` has no fixed
-# emoji of its own -- its header emoji is the attractiveness emoji below,
-# exactly like before this project tracked price history. The other three
-# events lead with their own fixed glyph instead, so they stay recognizable
-# in a Telegram feed regardless of the offer's attractiveness category.
+# `new_offer` borrows the attractiveness emoji; price-history events keep their
+# own glyph so they stay recognizable in a feed regardless of category.
 EVENT_LABELS_PL: dict[str, tuple[str | None, str]] = {
     "new_offer": (None, "NOWA"),
     "returned": ("↩️", "WRÓCIŁA"),
@@ -86,8 +77,7 @@ EVENT_LABELS_PL: dict[str, tuple[str | None, str]] = {
     "new_low": ("🏆", "NAJNIŻSZA CENA"),
 }
 
-# Locative case ("w maju"), indexed by `date.month - 1`. Used only for the
-# Climate V0 "sun" line -- see climate.py for what the temperature itself means.
+# Locative case ("w maju") for the climate line; see climate.py for the data.
 MONTHS_PL_LOCATIVE = (
     "styczniu",
     "lutym",
@@ -103,11 +93,6 @@ MONTHS_PL_LOCATIVE = (
     "grudniu",
 )
 
-# (emoji, Polish label) for each attractiveness.Attractiveness category. The
-# label is always shown after the header's bullet; the emoji is only the
-# header's emoji for a `new_offer` (EVENT_LABELS_PL has no glyph of its own
-# for it) -- every other event leads with its own fixed emoji instead (see
-# EVENT_LABELS_PL), so the event stays recognizable regardless of category.
 ATTRACTIVENESS_LABELS_PL: dict[Attractiveness, tuple[str, str]] = {
     "HOT": ("🔥", "Szczególnie ciekawa"),
     "GOOD": ("👍", "Dobra oferta"),
@@ -264,135 +249,156 @@ class NotificationMessage:
         attractiveness_config: AttractivenessConfig | None = None,
         provider_ratings: Mapping[str, RatingRule] | None = None,
     ) -> str:
-        """Render one compact message, in Polish, for the console or Telegram.
+        """Render one compact Polish message for the console or Telegram.
 
-        The header's category (HOT/GOOD/MATCH) is computed fresh from the
-        current `offer` via `attractiveness.classify_offer` every time this
-        is called -- it is never read from a stored field. Callers that do
-        not care about calibrated classification (most existing tests) may
-        omit both config arguments and get the built-in V0 defaults; the
-        production entry point (`__main__.py`) always passes the real,
-        configured values through `Notifier`.
-
-        `final_score` and Tripadvisor rating are deliberately never shown here
-        (they still drive ranking/eligibility elsewhere -- only the message
-        content is affected). An incomplete price (`price_is_complete=False`)
-        still gets a short disclaimer, moved under the link rather than mixed
-        into the main body: by the time a notification exists in the outbox,
-        `filtering.matches()` has already decided this provider's listing
-        price is acceptable to alert on (see
-        `filters["accept_incomplete_price_from"]`); this method never
-        re-checks that decision, only discloses it.
+        The HOT/GOOD/MATCH category is classified fresh from the snapshot, never
+        stored. `final_score` is deliberately not shown. An incomplete price only
+        gets a disclaimer: `filtering.matches()` already decided it may alert.
         """
         offer = self.offer
-        e = html.escape
         ratings = provider_ratings if provider_ratings is not None else {}
-        breakdown = classify_offer(offer, ratings, attractiveness_config)
-        attractiveness_emoji, category_label = ATTRACTIVENESS_LABELS_PL[breakdown.category]
-        event_emoji, event_label = EVENT_LABELS_PL.get(self.kind, (None, self.kind))
-        emoji = event_emoji or attractiveness_emoji
-
-        lines = [f"{emoji} {event_label} • {category_label}"]
-
-        hotel = [e(offer.hotel_name) if offer.hotel_name else "Hotel nieznany"]
-        if offer.hotel_stars is not None:
-            hotel[0] += f" {'★' * max(0, round(offer.hotel_stars))}"
-        country_name = COUNTRY_NAMES_PL.get(offer.country, offer.country) if offer.country else None
-        if country_name:
-            hotel.append(e(country_name))
-        destination = _compact_destination(offer.destination)
-        if destination:
-            hotel.append(e(destination))
-        lines.append(f"🏨 {' • '.join(hotel)}")
-
-        rating_part = None
-        if offer.rating is not None:
-            rating_part = f"⭐ {f'{offer.rating:.1f}'.replace('.', ',')}"
-            if offer.provider_rating_max is not None:
-                rating_part += f"/{_pl_number(offer.provider_rating_max)}"
-            for source in dict.fromkeys(["google", "tripadvisor", *offer.hotel_ratings]):
-                verified = _verified_external_rating(offer, source)
-                if verified is None:
-                    continue
-                v_rating, v_max = verified
-                label = EXTERNAL_SOURCE_LABELS.get(source, source.capitalize())
-                rating_part += (
-                    f" ({label}: {f'{v_rating:.1f}'.replace('.', ',')}/{_pl_number(v_max)})"
-                )
-        board_part = None
-        if offer.board_type:
-            board_label = BOARD_LABELS_PL.get(offer.board_type, offer.board_type)
-            board_part = f"🍽 {e(board_label)}"
-        if rating_part or board_part:
-            lines.append(" ".join(part for part in (rating_part, board_part) if part))
-
-        nights = (
-            (offer.return_date - offer.departure_date).days
-            if offer.departure_date is not None and offer.return_date is not None
-            else None
-        )
-
-        if offer.price_per_person is not None:
-            price_line = f"💰 {_pl_decimal(offer.price_per_person)} zł/os."
-            people = offer.number_of_people
-            total = offer.total_price
-            if total is None and people is not None:
-                total = offer.price_per_person * people
-            if total is not None and people is not None:
-                price_line += f" ({_pl_decimal(total)} zł / {people} {_pl_people(people)})"
-            per_night = _price_per_person_per_night(offer.price_per_person, nights)
-            if per_night is not None:
-                price_line += f" • {per_night}"
-            lines.append(price_line)
-            if self.kind in ("price_drop", "new_low") and self.previous_price is not None:
-                drop = self.previous_price - offer.price_per_person
-                lines.append(
-                    f"📉 Było {_pl_decimal(self.previous_price)} zł/os. "
-                    f"• spadek {_pl_decimal(drop)} zł"
-                )
-
-        if offer.departure_airport:
-            airport_name = AIRPORT_DISPLAY_LABELS_PL.get(
-                offer.departure_airport, offer.departure_airport
-            )
-            departure_line = f"🛫 {e(airport_name)}"
-            stay_length = _stay_length(offer)
-            if stay_length is not None:
-                departure_line += f" • {stay_length}"
-            lines.append(departure_line)
-
-        if offer.departure_date is not None and offer.return_date is not None:
-            lines.append(f"📅 {_pl_date_range(offer.departure_date, offer.return_date)}")
-        elif offer.departure_date is not None:
-            lines.append(f"📅 {_pl_date(offer.departure_date)}")
-        elif offer.return_date is not None:
-            lines.append(f"🛬 Powrót: {_pl_date(offer.return_date)}")
-
-        if offer.departure_date is not None:
-            temperature = typical_daytime_temperature(
-                offer.country, offer.destination, offer.departure_date.month
-            )
-            if temperature is not None:
-                month_name = MONTHS_PL_LOCATIVE[offer.departure_date.month - 1]
-                lines.append(f"☀️ Typowo w {month_name}: ok. {temperature}°C")
-
+        category = classify_offer(offer, ratings, attractiveness_config).category
+        body = [
+            _header_line(self.kind, category),
+            _hotel_line(offer),
+            _rating_and_board_line(offer),
+            *_price_lines(offer, self.kind, self.previous_price),
+            _departure_line(offer),
+            _dates_line(offer),
+            _climate_line(offer),
+        ]
+        footer = [
+            _link_line(offer),
+            None if offer.price_is_complete else "ℹ️ Cena z listingu — niepotwierdzona.",
+            *_booking_cost_lines(offer),
+        ]
+        lines = [line for line in body if line is not None]
         lines.append("")
-
-        if offer.url:
-            lines.append(f'🔗 <a href="{e(offer.url)}">Zobacz ofertę</a>')
-
-        if not offer.price_is_complete:
-            lines.append("ℹ️ Cena z listingu — niepotwierdzona.")
-
-        if offer.booking_total_price is not None:
-            lines.append(
-                f"🧾 Cena całkowita rezerwacji: {_pl_decimal(offer.booking_total_price)} zł "
-                f"(zawiera opłaty obowiązkowe)"
-            )
-        for cost in offer.local_mandatory_costs:
-            detail = e(cost.description)
-            if cost.amount is not None:
-                detail += f" ({_pl_decimal(cost.amount)} {e(cost.currency or '')})"
-            lines.append(f"🧾 {detail}")
-
+        lines.extend(line for line in footer if line is not None)
         return "\n".join(lines).strip()
+
+
+def _nights(offer: Offer) -> int | None:
+    if offer.departure_date is None or offer.return_date is None:
+        return None
+    return (offer.return_date - offer.departure_date).days
+
+
+def _header_line(kind: str, category: Attractiveness) -> str:
+    attractiveness_emoji, category_label = ATTRACTIVENESS_LABELS_PL[category]
+    event_emoji, event_label = EVENT_LABELS_PL.get(kind, (None, kind))
+    return f"{event_emoji or attractiveness_emoji} {event_label} • {category_label}"
+
+
+def _hotel_line(offer: Offer) -> str:
+    name = html.escape(offer.hotel_name) if offer.hotel_name else "Hotel nieznany"
+    if offer.hotel_stars is not None:
+        name += f" {'★' * max(0, round(offer.hotel_stars))}"
+    parts = [name]
+    country_name = COUNTRY_NAMES_PL.get(offer.country, offer.country) if offer.country else None
+    if country_name:
+        parts.append(html.escape(country_name))
+    destination = _compact_destination(offer.destination)
+    if destination:
+        parts.append(html.escape(destination))
+    return f"🏨 {' • '.join(parts)}"
+
+
+def _pl_rating(value: float) -> str:
+    return f"{value:.1f}".replace(".", ",")
+
+
+def _rating_and_board_line(offer: Offer) -> str | None:
+    rating_part = None
+    if offer.rating is not None:
+        rating_part = f"⭐ {_pl_rating(offer.rating)}"
+        if offer.provider_rating_max is not None:
+            rating_part += f"/{_pl_number(offer.provider_rating_max)}"
+        for source in dict.fromkeys(["google", "tripadvisor", *offer.hotel_ratings]):
+            verified = _verified_external_rating(offer, source)
+            if verified is None:
+                continue
+            external_rating, external_max = verified
+            label = EXTERNAL_SOURCE_LABELS.get(source, source.capitalize())
+            rating_part += f" ({label}: {_pl_rating(external_rating)}/{_pl_number(external_max)})"
+    board_part = None
+    if offer.board_type:
+        board_label = BOARD_LABELS_PL.get(offer.board_type, offer.board_type)
+        board_part = f"🍽 {html.escape(board_label)}"
+    if not (rating_part or board_part):
+        return None
+    return " ".join(part for part in (rating_part, board_part) if part)
+
+
+def _price_lines(offer: Offer, kind: str, previous_price: Decimal | None) -> list[str]:
+    if offer.price_per_person is None:
+        return []
+    price_line = f"💰 {_pl_decimal(offer.price_per_person)} zł/os."
+    people = offer.number_of_people
+    total = offer.total_price
+    if total is None and people is not None:
+        total = offer.price_per_person * people
+    if total is not None and people is not None:
+        price_line += f" ({_pl_decimal(total)} zł / {people} {_pl_people(people)})"
+    per_night = _price_per_person_per_night(offer.price_per_person, _nights(offer))
+    if per_night is not None:
+        price_line += f" • {per_night}"
+    lines = [price_line]
+    if kind in ("price_drop", "new_low") and previous_price is not None:
+        drop = previous_price - offer.price_per_person
+        lines.append(
+            f"📉 Było {_pl_decimal(previous_price)} zł/os. • spadek {_pl_decimal(drop)} zł"
+        )
+    return lines
+
+
+def _departure_line(offer: Offer) -> str | None:
+    if not offer.departure_airport:
+        return None
+    airport_name = AIRPORT_DISPLAY_LABELS_PL.get(offer.departure_airport, offer.departure_airport)
+    line = f"🛫 {html.escape(airport_name)}"
+    stay_length = _stay_length(offer)
+    if stay_length is not None:
+        line += f" • {stay_length}"
+    return line
+
+
+def _dates_line(offer: Offer) -> str | None:
+    if offer.departure_date is not None and offer.return_date is not None:
+        return f"📅 {_pl_date_range(offer.departure_date, offer.return_date)}"
+    if offer.departure_date is not None:
+        return f"📅 {_pl_date(offer.departure_date)}"
+    if offer.return_date is not None:
+        return f"🛬 Powrót: {_pl_date(offer.return_date)}"
+    return None
+
+
+def _climate_line(offer: Offer) -> str | None:
+    if offer.departure_date is None:
+        return None
+    month = offer.departure_date.month
+    temperature = typical_daytime_temperature(offer.country, offer.destination, month)
+    if temperature is None:
+        return None
+    return f"☀️ Typowo w {MONTHS_PL_LOCATIVE[month - 1]}: ok. {temperature}°C"
+
+
+def _link_line(offer: Offer) -> str | None:
+    if not offer.url:
+        return None
+    return f'🔗 <a href="{html.escape(offer.url)}">Zobacz ofertę</a>'
+
+
+def _booking_cost_lines(offer: Offer) -> list[str]:
+    lines: list[str] = []
+    if offer.booking_total_price is not None:
+        lines.append(
+            f"🧾 Cena całkowita rezerwacji: {_pl_decimal(offer.booking_total_price)} zł "
+            f"(zawiera opłaty obowiązkowe)"
+        )
+    for cost in offer.local_mandatory_costs:
+        detail = html.escape(cost.description)
+        if cost.amount is not None:
+            detail += f" ({_pl_decimal(cost.amount)} {html.escape(cost.currency or '')})"
+        lines.append(f"🧾 {detail}")
+    return lines

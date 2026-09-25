@@ -5,7 +5,7 @@ import re
 from decimal import Decimal
 from html.parser import HTMLParser
 
-from .itaka_data import mapping
+from .boundary import mapping
 
 
 class Scripts(HTMLParser):

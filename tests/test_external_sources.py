@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import pytest
 
+from conftest import TEST_CONFIG
 from travel_deal_agent.config import Settings
 from travel_deal_agent.models import ExternalHotelRating, Offer
 from travel_deal_agent.notification_content import NotificationMessage
@@ -81,7 +82,6 @@ def test_two_sources_persist_and_render(
 def test_untrusted_matching_rejected(
     offer: Offer, evidence: ExternalHotelRating, settings: Settings, change: str
 ) -> None:
-    # Arrange
     variants = {
         "country": replace(evidence, country="ES"),
         "region": replace(evidence, location="Other"),
@@ -93,11 +93,9 @@ def test_untrusted_matching_rejected(
         "scale": replace(evidence, scale_max=10),
     }
     settings.external_verification["enabled"] = True
-    # Act
     result = verify_external(
         offer, FixtureRatingProvider("google", variants[change]), settings.external_verification
     )
-    # Assert
     assert result.hotel_ratings == {}
     assert result.external_verification_statuses["google"] == "rejected_match"
 
@@ -106,15 +104,12 @@ def test_untrusted_matching_rejected(
 def test_incomplete_identity_skips_provider(
     offer: Offer, evidence: ExternalHotelRating, settings: Settings, missing: str
 ) -> None:
-    # Arrange
     adapter = FixtureRatingProvider("google", evidence)
     settings.external_verification["enabled"] = True
     candidate = (
         replace(offer, hotel_name=None) if missing == "name" else replace(offer, country=None)
     )
-    # Act
     result = verify_external(candidate, adapter, settings.external_verification)
-    # Assert
     assert not adapter.calls
     assert not result.hotel_ratings
 
@@ -122,13 +117,11 @@ def test_incomplete_identity_skips_provider(
 def test_optional_region_and_normalized_name(
     offer: Offer, evidence: ExternalHotelRating, settings: Settings
 ) -> None:
-    # Arrange
     settings.external_verification["enabled"] = True
     candidate = replace(offer, destination=None)
     adapter = FixtureRatingProvider(
         "google", replace(evidence, matched_hotel_name="  SUNNY   DEMO ", confidence=0.9)
     )
-    # Act / Assert
     assert verify_external(candidate, adapter, settings.external_verification).hotel_ratings
 
 
@@ -136,14 +129,11 @@ def test_optional_region_and_normalized_name(
 def test_failure_isolation(
     offer: Offer, evidence: ExternalHotelRating, settings: Settings, mode: str
 ) -> None:
-    # Arrange
     settings.external_verification["enabled"] = True
     settings.external_verification["sources"]["google"]["enabled"] = mode != "disabled"
     google = FixtureRatingProvider("google", None, fail=mode == "error")
     tripadvisor = FixtureRatingProvider("tripadvisor", replace(evidence, source="tripadvisor"))
-    # Act
     result = verify_external(offer, [google, tripadvisor], settings.external_verification)
-    # Assert
     assert set(result.hotel_ratings) == {"tripadvisor"}
     assert len(google.calls) == (0 if mode == "disabled" else 1)
     assert "Google: brak danych | Tripadvisor: 4.4/5" in format_ratings(result, settings.ranking)
@@ -187,7 +177,6 @@ def test_order_deduplication_and_candidate_budget(
 
 
 def test_placeholder_providers_are_offline(offer: Offer) -> None:
-    # Arrange / Act / Assert
     assert GoogleRatingProvider().verify(offer) is None
     assert TripadvisorRatingProvider().verify(offer) is None
 
@@ -203,7 +192,6 @@ def test_placeholder_providers_are_offline(offer: Offer) -> None:
     ],
 )
 def test_invalid_evidence(evidence: ExternalHotelRating, field: str, value: float) -> None:
-    # Arrange / Act / Assert
     with pytest.raises(ValueError):
         if field == "rating":
             replace(evidence, rating=value)
@@ -216,7 +204,6 @@ def test_invalid_evidence(evidence: ExternalHotelRating, field: str, value: floa
 
 
 def test_duplicate_registration_rejected(settings: Settings, store: Store) -> None:
-    # Arrange / Act / Assert
     with pytest.raises(ValueError, match="unique"):
         OfferPipeline(
             settings, store, external_providers=[GoogleRatingProvider(), GoogleRatingProvider()]
@@ -227,13 +214,11 @@ def test_duplicate_registration_rejected(settings: Settings, store: Store) -> No
 def test_invalid_source_configuration(mutation: str) -> None:
     from pydantic import TypeAdapter
 
-    from travel_deal_agent.config import ROOT, validate_options
+    from travel_deal_agent.config import validate_options
     from travel_deal_agent.config_types import AppConfig
 
     # Arrange
-    config = TypeAdapter(AppConfig).validate_json(
-        (ROOT / "config.json").read_text(encoding="utf-8")
-    )
+    config = TypeAdapter(AppConfig).validate_json(TEST_CONFIG.read_text(encoding="utf-8-sig"))
     policy = config["external_verification"]["sources"]["tripadvisor"]
     if mutation == "confidence":
         policy["min_confidence"] = 1.01
@@ -249,7 +234,6 @@ def test_invalid_source_configuration(mutation: str) -> None:
 def test_independent_scale_normalization(
     offer: Offer, evidence: ExternalHotelRating, settings: Settings
 ) -> None:
-    # Arrange
     settings.external_verification["enabled"] = True
     policy = settings.external_verification["sources"]["tripadvisor"]
     policy["scale"] = {"min": 0, "max": 10}
@@ -258,9 +242,7 @@ def test_independent_scale_normalization(
     adapter = FixtureRatingProvider(
         "tripadvisor", replace(evidence, source="tripadvisor", rating=5, scale_min=0, scale_max=10)
     )
-    # Act
     result = verify_external(offer, adapter, settings.external_verification)
-    # Assert
     assert score(result, settings.ranking, "1500") - score(
         offer, settings.ranking, "1500"
     ) == pytest.approx(1)

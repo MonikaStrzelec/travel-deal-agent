@@ -8,10 +8,10 @@ import pytest
 from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import RatingScale
 from travel_deal_agent.filtering import matches
-from travel_deal_agent.models import Offer
+from travel_deal_agent.models import ExternalHotelRating, Offer
 from travel_deal_agent.notifications import LogNotifier
 from travel_deal_agent.providers.base import Provider
-from travel_deal_agent.providers.external_rating import ExternalHotelRatingProvider, HotelRating
+from travel_deal_agent.providers.external_rating import ExternalHotelRatingProvider
 from travel_deal_agent.ranking import score
 from travel_deal_agent.ratings import normalize_rating, validate_rating_rules
 from travel_deal_agent.scheduler import Scheduler
@@ -131,12 +131,10 @@ def test_invalid_rules(settings: Settings, mutation: str) -> None:
 def test_wakacje_uses_one_configurable_threshold_without_price_bands(
     offer: Offer, settings: Settings
 ) -> None:
-    # Arrange
     rule = settings.filters["provider_ratings"]["wakacje.pl"]
     filters = deepcopy(settings.filters)
     filters["provider_ratings"]["wakacje.pl"]["min_rating"] = 7.5
     candidate = replace(offer, provider="wakacje.pl", rating=7.6)
-    # Act / Assert
     assert rule.get("min_rating") == 8
     assert rule["price_bands"] == []
     assert not matches(candidate, settings.filters)
@@ -145,7 +143,6 @@ def test_wakacje_uses_one_configurable_threshold_without_price_bands(
 
 @pytest.mark.parametrize("mutation", ["both", "out_of_scale", "missing"])
 def test_invalid_single_threshold_rules(settings: Settings, mutation: str) -> None:
-    # Arrange
     rules = deepcopy(settings.filters["provider_ratings"])
     rule = rules["wakacje.pl"]
     if mutation == "both":
@@ -154,7 +151,6 @@ def test_invalid_single_threshold_rules(settings: Settings, mutation: str) -> No
         rule["min_rating"] = 11
     else:
         del rule["min_rating"]
-    # Act / Assert
     with pytest.raises(ValueError):
         validate_rating_rules(rules)
 
@@ -180,13 +176,13 @@ class FixtureExternal(ExternalHotelRatingProvider):
         self.calls: list[str] = []
         self.mode = mode
 
-    def verify(self, offer: Offer) -> HotelRating | None:
+    def verify(self, offer: Offer) -> ExternalHotelRating | None:
         self.calls.append(offer.offer_id)
         if self.mode == "error":
             raise RuntimeError("Fixture error")
         if self.mode == "missing":
             return None
-        return HotelRating(
+        return ExternalHotelRating(
             source="google",
             rating=4.5,
             scale_min=1,

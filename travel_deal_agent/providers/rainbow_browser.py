@@ -32,9 +32,7 @@ from .rainbow_nuxt import MAX_HTML_BYTES, RainbowDetailError
 
 logger = logging.getLogger(__name__)
 CARD = '[data-test-id^="r-bloczek:szukaj:"]'
-EMPTY = '[data-test-id="r-typography:szukaj-brakWynikow:tytul"]'
 SORT = '[name="szukaj-sortowanie"]'
-COUNT = '[data-test-id="r-typography:szukaj-naglowek:liczbaOfert"]'
 
 # State belongs to this wait only. Polling is condition-based, not a fixed sleep.
 WAIT = """({expected, token}) => {

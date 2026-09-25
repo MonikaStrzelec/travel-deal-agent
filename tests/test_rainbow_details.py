@@ -144,9 +144,7 @@ def test_reference_indices_are_not_hardcoded() -> None:
 
 @pytest.mark.parametrize("product,opaque", [("other", OPAQUE), (PRODUCT, "other"), ("", OPAQUE)])
 def test_expected_identity_is_required(product: str, opaque: str) -> None:
-    # Arrange
     html = FIXTURE.read_text(encoding="utf-8")
-    # Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(html, product, opaque)
 
@@ -196,10 +194,8 @@ def test_expected_identity_is_required(product: str, opaque: str) -> None:
     ],
 )
 def test_conflicting_or_unsupported_evidence(path: tuple[str | int, ...], value: object) -> None:
-    # Arrange
     root = decoded_fixture()
     change(root, path, value)
-    # Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(encode(root))
 
@@ -219,11 +215,9 @@ def test_conflicting_or_unsupported_evidence(path: tuple[str | int, ...], value:
     ],
 )
 def test_booking_parameters_must_agree(old: str, new: str) -> None:
-    # Arrange
     root = decoded_fixture()
     original = cast(str, node(root, *SELECTED, "RezerwujParametry"))
     change(root, (*SELECTED, "RezerwujParametry"), original.replace(old, new))
-    # Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(encode(root))
 
@@ -249,14 +243,11 @@ def test_prices_use_decimal_and_ignore_alternative_surcharges() -> None:
 
 
 def test_explicitly_visible_times_are_preserved() -> None:
-    # Arrange
     root = decoded_fixture()
     change(root, (*FLIGHT, "TrasaWyjazdowa", "CzyWyswietlacGodzine"), True)
     change(root, (*FLIGHT, "TrasaWyjazdowa", "TerminWyjazdu"), "2026-12-05T09:00:00Z")
     change(root, (*FLIGHT, "TrasaWyjazdowa", "TerminDojazdu"), "2026-12-05T12:00:00Z")
-    # Act
     result = parse(encode(root))
-    # Assert
     assert result.outbound.departure_time == datetime(2026, 12, 5, 9, tzinfo=timezone.utc)
     assert result.inbound.departure_time is None
 
@@ -276,7 +267,6 @@ def test_explicitly_visible_times_are_preserved() -> None:
     ],
 )
 def test_invalid_document(html: str) -> None:
-    # Arrange / Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(html)
 
@@ -298,7 +288,6 @@ def test_invalid_document(html: str) -> None:
     ],
 )
 def test_bad_reference_graph_is_bounded(table: list[object]) -> None:
-    # Arrange / Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(document(table))
 
@@ -306,17 +295,14 @@ def test_bad_reference_graph_is_bounded(table: list[object]) -> None:
 def test_reference_fanout_is_bounded() -> None:
     # Arrange: small table with many edges, requiring no unbounded expansion.
     table: list[object] = [{"value": 1}, [2] * 50_001, 7]
-    # Act / Assert
     with pytest.raises(RainbowDetailError, match="budget"):
         NuxtTable(document(table)).read("value")
 
 
 @pytest.mark.parametrize("field", ["CenaAvg", "CenyZaOsoby", "OsobyHTP", "RezerwujParametry"])
 def test_required_evidence_cannot_be_missing(field: str) -> None:
-    # Arrange
     root = decoded_fixture()
     del cast(dict[str, object], node(root, *SELECTED))[field]
-    # Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(encode(root))
 
@@ -370,21 +356,17 @@ def test_different_product_dates_room_and_prices_are_not_hardcoded() -> None:
     ],
 )
 def test_invalid_local_date_references(replacement: list[object]) -> None:
-    # Arrange
     table = fixture_table()
     index = next(
         i for i, v in enumerate(table) if isinstance(v, list) and v and v[0] == "LocalDate"
     )
     table[index] = replacement
-    # Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(document(table))
 
 
 def test_deep_json_is_rejected_without_recursion_escape() -> None:
-    # Arrange
     html = '<script id="__NUXT_DATA__">' + "[" * 2000 + "0" + "]" * 2000 + "</script>"
-    # Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(html)
 
@@ -397,6 +379,5 @@ def test_deep_json_is_rejected_without_recursion_escape() -> None:
     ],
 )
 def test_invalid_number_or_encoding_has_explicit_error(html: str) -> None:
-    # Arrange / Act / Assert
     with pytest.raises(RainbowDetailError):
         parse(html)

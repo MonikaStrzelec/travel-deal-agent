@@ -1,7 +1,6 @@
 """Offline Wakacje.pl parsing for the listing-only source (no detail confirmation).
 
-Confirmed offline via `experiments/wakacje_pl/RECONNAISSANCE.md` (sections referenced
-below); nothing here performs or assumes a live request.
+Nothing here performs or assumes a live request.
 
 The listing page (`/wczasy/` -- the site's own general search, not the narrower
 `/lastminute/` category -- optionally with one robots-legal single-flag query such as
@@ -9,36 +8,35 @@ The listing page (`/wczasy/` -- the site's own general search, not the narrower
 shape, `?str-<n>,z-wroclawia`) embeds a standard Next.js `<script id="__NEXT_DATA__">`
 whose text is plain JSON (unlike TUI's base64-wrapped payload). The offer records
 live at `props.dehydratedState.queries[?].state.data.offers.data`, in the one query
-whose `queryKey[0] == "listingOffers"` (sec 3, 11.3). This shape, and this module's
-parsing of it, is identical regardless of which page of which confirmed airport it
-came from -- pagination is an orchestration concern of `wakacje.py`'s `fetch()`, not
-of this module.
+whose `queryKey[0] == "listingOffers"`. This shape, and this module's parsing of it,
+is identical regardless of which page of which confirmed airport it came from --
+pagination is an orchestration concern of `wakacje.py`'s `fetch()`, not of this
+module.
 
 Two facts drive this module's shape:
 
 - The bare, robots-legal detail page (`/oferty/.../slug-id.html`, no query string)
-  carries NO offer-specific data at all -- no price, dates, board, airport or rating
-  count (sec 12.2). There is therefore no detail-confirmation stage here, unlike
+  carries no offer-specific data at all -- no price, dates, board, airport or
+  rating count. There is therefore no detail-confirmation stage here, unlike
   ITAKA's `itaka_details.py`; `price_is_complete` stays `False` unconditionally.
-- A single-flag departure-airport filter (`?z-<city>`) was confirmed to genuinely
-  change server-rendered results, and every offer it returns is unambiguously priced
-  for that one airport (`departurePlaces` collapses to a single entry) -- but the
-  SAME numeric `id`, fetched under a different airport filter, was observed with a
-  DIFFERENT departure date and price (sec 12.1). The raw numeric `id` is therefore
-  never used alone as `Offer.offer_id`; see `variant_identity`.
-- The provider (`wakacje.py`) now always fetches its one confirmed combined search
-  query, which includes the site's own `za-osobe` ("average per person") price-view
-  toggle -- the reverse of the query this module's price handling originally
-  assumed (see the price section below, sec 24-25).
+- A single-flag departure-airport filter (`?z-<city>`) genuinely changes
+  server-rendered results, and every offer it returns is unambiguously priced
+  for that one airport (`departurePlaces` collapses to a single entry) -- but
+  the same numeric `id`, fetched under a different airport filter, was
+  observed with a different departure date and price. The raw numeric `id` is
+  therefore never used alone as `Offer.offer_id`; see `variant_identity`.
+- The provider (`wakacje.py`) always fetches its one confirmed combined search
+  query, which includes the site's own `za-osobe` ("average per person")
+  price-view toggle -- see the price section below.
 
 `departurePlaces` (the list of *other* cities a card could also depart from) is read
 only to validate the source shape -- it is never iterated to fabricate additional
-offers (sec 6, 8a.5, 12.1: it carries no per-city price or code, and its own contents
-are contextual to the specific fetch, not a fixed hotel property).
+offers: it carries no per-city price or code, and its own contents are contextual
+to the specific fetch, not a fixed hotel property.
 
 `ratingReservationCount`'s exact semantics (booking count vs. review count) are not
-literally confirmed (sec 8b.1); it is parsed for shape validation only and never
-copied into `Offer.number_of_reviews`.
+confirmed; it is parsed for shape validation only and never copied into
+`Offer.number_of_reviews`.
 """
 
 import hashlib
@@ -52,47 +50,20 @@ from html.parser import HTMLParser
 from pydantic import Field, ValidationError
 
 from ..models import Offer
-from .itaka_data import Boundary, mapping
+from .boundary import Boundary, mapping
 
 logger = logging.getLogger(__name__)
 
 MAX_HTML_BYTES = 4_000_000
 BASE = "https://www.wakacje.pl"
 
-# Every fetch this provider makes uses Wakacje.pl's own unmodified default room
-# composition (rooms=[{"adult": 2, "kid": 0}]) -- confirmed identical across every
-# listing fetch so far (RECONNAISSANCE.md sec 3, 5, 12.1, 25). No per-offer
-# party-size field exists on the source record itself, so this is a property of
-# how this provider queries, not something read from each offer.
+# The source record has no party size; every query uses the site's default room
+# of 2 adults.
 ASSUMED_PARTY_SIZE = 2
 
-# Only country slugs directly observed as a real Wakacje.pl URL path segment.
-# The source carries no ISO code (only its own slug, Polish display name and an
-# internal numeric id), so an unknown slug is never guessed into a code -- same
-# convention as `itaka_data.COUNTRIES`. An unmapped country is NOT a reason to
-# reject an offer: business eligibility no longer depends on the country, so such
-# an offer keeps `country=None` and its source display name is kept in
-# `destination` instead. The slug is the site's own `place.country.slug`, which
-# `normalize_offer`'s own `url` field construction confirms is identical to the
-# first path segment of a real offer detail URL (`/oferty/<country-slug>/...`).
-#
-# turcja/egipt/tunezja/grecja -- RECONNAISSANCE.md sec 11.4, 12.1 (offline).
-# albania -- live-verified: two real, fetched offer URLs in a later session both
-#   began `/oferty/albania/...` (hotel "Alion", two separate date/price variants).
-# bulgaria -- RECONNAISSANCE.md sec 11.4: the real, on-page category link
-#   `/lastminute/bulgaria/` (offline, not guessed).
-# hiszpania -- RECONNAISSANCE.md sec 11.4 (`/lastminute/hiszpania/`) *and*
-#   live-verified separately via a real fetched offer URL
-#   (`/oferty/hiszpania/...`, hotel "HTop Olympic").
-# cypr -- live-verified: the real `place.country.slug` on 2 records from the
-#   final full-provider live scan (RECONNAISSANCE.md sec 23), previously
-#   unmapped and normalized as country=None.
-# malta -- live-verified: the real `place.country.slug` ("malta") on a real
-#   offer record (hotel "Luna Holiday Complex") from the confirmed combined
-#   search query's live confirmation (sec 25). Previously Malta was seen only
-#   as a display name on listing cards, never as a slug -- this is the first
-#   time the actual slug was observed, so it is now added, same evidence
-#   standard as "cypr" above.
+# Only `place.country.slug` values observed on real Wakacje.pl URLs. An unknown
+# slug is never guessed: the offer keeps `country=None` and its display name
+# stays in `destination`.
 COUNTRIES = {
     "turcja": "TR",
     "egipt": "EG",
@@ -105,16 +76,9 @@ COUNTRIES = {
     "malta": "MT",
 }
 
-# Confirmed via the site's own `cateringList` filter definition (RECONNAISSANCE.md
-# sec 8a.2, 11.3): the numeric `service` code is the reliable board bucket;
-# `serviceDesc` free text is only a finer label WITHIN that bucket (e.g. "Ultra All
-# Inclusive" vs. "All Inclusive", both code 1) -- never a sign the code itself is
-# ambiguous. Code 4 (wlasne/self-catering) maps to RO, matching
-# `boards.CANONICAL_BOARDS`. Code 5 ("Według programu" / itinerary-based board) is
-# a deliberate business decision to accept ZO as a normal, canonical board
-# (boards.CANONICAL_BOARDS, boards.BOARD_ORDER) -- ranked below HB/FB/AI (never
-# treated as better), still eligible for filtering.matches() and ranking like any
-# other board once "ZO" is present in filters["allowed_boards"].
+# The numeric `service` code is the board bucket (the site's `cateringList`);
+# `serviceDesc` only refines it, e.g. both "Ultra All Inclusive" and "All Inclusive"
+# are code 1. Code 5 ("Według programu") is accepted as ZO by business decision.
 SERVICE_BOARDS: dict[int, str | None] = {
     1: "AI",
     2: "HB",
@@ -188,16 +152,15 @@ class NextDataScript(HTMLParser):
 class OfferLinkParser(HTMLParser):
     """Collect each offer card's own real detail-page href, keyed by its id.
 
-    Confirmed offline (`data/wakacje-recon/wczasy-combo-recon.html`, a real fetch
-    of this provider's own confirmed search query): each offer card's anchor
-    carries `data-test-offer-id="<id>"` and an `href` that keeps the exact
-    variant -- departure date, duration, board and departure-airport slug, e.g.
+    Each offer card's anchor carries `data-test-offer-id="<id>"` and an `href`
+    that keeps the exact variant -- departure date, duration, board and
+    departure-airport slug, e.g.
     `.../luna-holiday-complex-912903.html?od-2027-01-13,7-dni,HB,z-warszawy` --
     unlike the bare `/oferty/.../slug-id.html` URL `normalize_offer` otherwise
     constructs from slugs alone, which carries none of that and lets Wakacje.pl
-    default to an unrelated variant once opened. One anchor per id, confirmed
-    1:1 with the `listingOffers` JSON `id` field on the very same fetched page --
-    reading it here adds no request.
+    default to an unrelated variant once opened. One anchor per id, matching
+    the `listingOffers` JSON `id` field on the same fetched page -- reading it
+    here adds no request.
     """
 
     def __init__(self) -> None:
@@ -221,8 +184,7 @@ def extract_offer_links(html: str) -> dict[int, str]:
     Best-effort only: this is read from the same already-fetched listing HTML
     as `decode_next_data`/`extract_offers`, never a separate request. Absent or
     unmatched markup simply yields no entry for that id -- `normalize_offer`
-    then falls back to its own reconstructed URL, exactly as it did before this
-    map existed.
+    then falls back to its own reconstructed URL.
     """
     if len(html) > MAX_HTML_BYTES:
         raise ValueError("Wakacje.pl listing HTML exceeds size limit")
@@ -270,11 +232,10 @@ def decode_next_data(html: str) -> dict[str, object]:
 def extract_offers(next_data: dict[str, object]) -> list[dict[str, object]]:
     """Return the raw offer records from the one `listingOffers` dehydrated query.
 
-    Confirmed offline (RECONNAISSANCE.md sec 3, 11.3): the offer records live at
-    `props.dehydratedState.queries[?].state.data.offers.data`, in the single query
-    whose `queryKey[0] == "listingOffers"`. Exactly one such query is required; more
-    than one is ambiguous (never guessed which is authoritative), and none means the
-    page no longer carries this shape.
+    The offer records live at `props.dehydratedState.queries[?].state.data.offers.data`,
+    in the single query whose `queryKey[0] == "listingOffers"`. Exactly one such
+    query is required; more than one is ambiguous (never guessed which is
+    authoritative), and none means the page no longer carries this shape.
     """
     props = mapping(next_data.get("props"))
     dehydrated = props.get("dehydratedState")
@@ -314,9 +275,9 @@ def variant_identity(raw: RawOffer, departure_date: date) -> str:
 
     The numeric source `id` alone is not a stable variant identifier: the same id was
     observed, across two different departure-airport fetches, with a different
-    departure date AND price (RECONNAISSANCE.md sec 12.1). Only fields whose
-    variant-defining role is confirmed are included -- nothing with unconfirmed
-    semantics (e.g. `departurePlaces`, `ratingReservationCount`) is added.
+    departure date and price. Only fields whose variant-defining role is confirmed
+    are included -- nothing with unconfirmed semantics (e.g. `departurePlaces`,
+    `ratingReservationCount`) is added.
     """
     identity = {
         "source_id": raw.id,
@@ -339,9 +300,8 @@ def normalize_offer(
 
     `requested_departure_airport`, when given, is the IATA-style code of the
     single-flag filter used for this fetch (e.g. "WRO" for `?z-wroclawia`); every
-    returned offer is required to match it exactly -- confirmed to always hold in
-    reconnaissance (sec 12.1). A mismatch means the site's filtering contract
-    changed and must fail loudly, not be silently accepted.
+    returned offer is required to match it exactly. A mismatch means the site's
+    filtering contract changed and must fail loudly, not be silently accepted.
 
     `offer_links`, when given (from `extract_offer_links` on the same fetched
     HTML), maps this offer's numeric id to its real on-page href, which is
@@ -364,13 +324,8 @@ def normalize_offer(
     if (returning - departure).days != raw.duration:
         raise ValueError("Wakacje.pl duration disagrees with departure/return dates")
 
-    # `raw.price` is the site's own per-person figure, not a total: this
-    # provider's one confirmed search query includes `za-osobe` ("average per
-    # person"), the reverse of the site's plain default (`totalPrice: true,
-    # pricePerPerson: false`). Confirmed directly, not inferred: live-fetched
-    # offers' raw `price` values matched, PLN for PLN, the per-person figures
-    # visibly labeled "średnia za osobę" on the real page during the same
-    # manual session that confirmed this query (RECONNAISSANCE.md sec 25).
+    # `price` is per person because the confirmed query includes `za-osobe`
+    # (the page's own "średnia za osobę" price-view toggle).
     price_per_person = Decimal(raw.price)
     total_price = price_per_person * Decimal(ASSUMED_PARTY_SIZE)
 
@@ -420,9 +375,8 @@ def normalize_offer(
         currency=raw.originalCurrency,
         hotel_stars=raw.category,
         rating=rating,
-        # ratingReservationCount's exact semantics are not literally confirmed
-        # (RECONNAISSANCE.md sec 8b.1); never mapped to number_of_reviews to avoid
-        # asserting an unconfirmed meaning.
+        # ratingReservationCount's exact semantics are not confirmed; never
+        # mapped to number_of_reviews to avoid asserting an unconfirmed meaning.
         number_of_reviews=None,
         provider_rating_max=10.0,
         board_type=SERVICE_BOARDS.get(raw.service),

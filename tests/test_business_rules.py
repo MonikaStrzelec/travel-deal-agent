@@ -93,22 +93,17 @@ COUNTRIES = [
 def test_three_stars_suffice_in_every_country(
     offer: Offer, settings: Settings, country: str, stars: int, expected: bool
 ) -> None:
-    # Arrange
     candidate = replace(offer, country=country, hotel_stars=stars)
-    # Act / Assert
     assert matches(candidate, settings.filters) is expected
 
 
 def test_no_country_specific_star_override_exists(settings: Settings) -> None:
-    # Arrange / Act / Assert
     assert "country_min_stars" not in settings.filters
     assert settings.filters["min_stars"] == 3
 
 
 def test_star_minimum_is_configuration(offer: Offer, settings: Settings) -> None:
-    # Arrange
     candidate = replace(offer, country="EG", hotel_stars=3)
-    # Act / Assert
     assert matches(candidate, settings.filters)
     settings.filters["min_stars"] = 4
     assert not matches(candidate, settings.filters)
@@ -118,7 +113,6 @@ def test_star_minimum_is_configuration(offer: Offer, settings: Settings) -> None
 def test_unmapped_country_is_not_rejected(offer: Offer, settings: Settings) -> None:
     # Arrange: a source country that no provider mapping knows yet.
     candidate = replace(offer, country=None, hotel_stars=3)
-    # Act / Assert
     assert matches(candidate, settings.filters)
 
 
@@ -126,9 +120,7 @@ def test_unmapped_country_is_not_rejected(offer: Offer, settings: Settings) -> N
 def test_malformed_country_code_is_still_rejected(
     offer: Offer, settings: Settings, country: str
 ) -> None:
-    # Arrange
     candidate = replace(offer, country=country)
-    # Act / Assert
     assert not matches(candidate, settings.filters)
 
 
@@ -138,7 +130,6 @@ def test_malformed_country_code_is_still_rejected(
 def test_breakfast_or_better(offer: Offer, settings: Settings, meal: str) -> None:
     # Exercise configurable breakfast-inclusive policy, independent of the stricter default.
     settings.filters["allowed_boards"] = ["BB", "HB", "FB", "AI", "UAI"]
-    # Arrange / Act / Assert
     assert matches(
         replace(offer, board_type=meal, price_per_person=Decimal("999.99")), settings.filters
     )
@@ -152,14 +143,12 @@ def test_zo_passes_when_allowed(offer: Offer, settings: Settings) -> None:
     # below-PLN-1000 meal band (min_board BB) once explicitly whitelisted.
     settings.filters["allowed_boards"] = ["ZO"]
     candidate = replace(offer, board_type="ZO", price_per_person=Decimal("900"))
-    # Act / Assert
     assert matches(candidate, settings.filters)
 
 
 def test_zo_rejected_when_not_allowed(offer: Offer, settings: Settings) -> None:
     # Arrange: default whitelist (HB, FB, AI) does not include ZO.
     candidate = replace(offer, board_type="ZO", price_per_person=Decimal("900"))
-    # Act / Assert
     assert "ZO" not in settings.filters["allowed_boards"]
     assert not matches(candidate, settings.filters)
 
@@ -169,7 +158,6 @@ def test_zo_never_treated_as_better_than_half_board(offer: Offer, settings: Sett
     # 1000-1500) meal band, which requires at least HB -- ZO ranks below it.
     settings.filters["allowed_boards"] = ["ZO", "HB", "FB", "AI"]
     candidate = replace(offer, board_type="ZO", price_per_person=Decimal("1200"))
-    # Act / Assert
     assert not matches(candidate, settings.filters)
     assert matches(replace(candidate, board_type="HB"), settings.filters)
 
@@ -199,17 +187,14 @@ def test_ai_hb_fb_still_work_after_adding_zo(offer: Offer, settings: Settings) -
     ],
 )
 def test_missing_meals_rejected(offer: Offer, settings: Settings, meal: str | None) -> None:
-    # Arrange / Act / Assert
     assert not matches(replace(offer, board_type=meal), settings.filters)
 
 
 def test_meal_order_and_airport_tie(offer: Offer, settings: Settings) -> None:
-    # Arrange
     scores = [
         score(replace(offer, board_type=b), settings.ranking, "1500")
         for b in ("BB", "HB", "FB", "AI", "UAI")
     ]
-    # Act / Assert
     assert all(a < b for a, b in zip(scores, scores[1:], strict=False))
     assert score(replace(offer, departure_airport="WAW"), settings.ranking, "1500") == score(
         replace(offer, departure_airport="WMI"), settings.ranking, "1500"
@@ -237,7 +222,6 @@ def test_meal_order_and_airport_tie(offer: Offer, settings: Settings) -> None:
 def test_itaka_code_requires_consistent_name(
     title: str | None, code: str, expected: str | None
 ) -> None:
-    # Arrange / Act / Assert
     assert normalize_board("itaka", title, code) == expected
 
 
@@ -268,13 +252,11 @@ def test_uai_text_alias_normalizes_without_a_provider_code(title: str) -> None:
 def test_meal_price_boundaries(
     offer: Offer, settings: Settings, price: str, board: str, expected: bool
 ) -> None:
-    # Arrange
     settings.filters["allowed_boards"] = ["BB", "HB", "FB", "AI", "UAI"]
     final_price = Decimal(price)
     candidate = replace(
         offer, price_per_person=final_price, total_price=2 * final_price, board_type=board
     )
-    # Act / Assert
     assert matches(candidate, settings.filters) is expected
 
 
@@ -283,7 +265,6 @@ def test_meal_price_boundaries(
 def test_no_meals_never_pass(
     offer: Offer, settings: Settings, price: str, board: str | None
 ) -> None:
-    # Arrange / Act / Assert
     assert not matches(
         replace(offer, price_per_person=Decimal(price), board_type=board), settings.filters
     )
@@ -295,7 +276,6 @@ def test_higher_meals_pass_all_budget_bands(
     offer: Offer, settings: Settings, price: str, board: str
 ) -> None:
     settings.filters["allowed_boards"] = ["BB", "HB", "FB", "AI", "UAI"]
-    # Arrange / Act / Assert
     assert matches(
         replace(offer, price_per_person=Decimal(price), board_type=board), settings.filters
     )
@@ -315,19 +295,16 @@ def test_mandatory_fees_move_offer_to_higher_meal_band(
         price_is_complete=complete,
         board_type="BB",
     )
-    # Act / Assert
     assert not matches(candidate, settings.filters)
     assert matches(replace(candidate, board_type="HB"), settings.filters) is complete
 
 
 def test_meal_threshold_is_configurable(offer: Offer, settings: Settings) -> None:
-    # Arrange
     settings.filters["allowed_boards"] = ["BB", "HB", "FB", "AI", "UAI"]
     candidate = replace(offer, price_per_person=Decimal("950"), board_type="BB")
     assert matches(candidate, settings.filters)
     settings.filters["board_price_bands"][0]["max_price"] = "900"
     settings.filters["board_price_bands"][1]["min_price"] = "900"
-    # Act / Assert
     assert not matches(candidate, settings.filters)
 
 
@@ -367,7 +344,6 @@ def test_whitelisted_provider_with_incomplete_price_still_matches(
     # Arrange: config.json whitelists wakacje.pl; an otherwise fully matching
     # offer with an unconfirmed (listing-only) price must still be eligible.
     candidate = replace(offer, provider="wakacje.pl", price_is_complete=False, rating=8.4)
-    # Act / Assert
     assert matches(candidate, settings.filters)
 
 
@@ -377,7 +353,6 @@ def test_non_whitelisted_provider_with_incomplete_price_never_matches(
     # Arrange: "mock" is not in accept_incomplete_price_from -- unchanged, original
     # behavior: an incomplete price always disqualifies it.
     candidate = replace(offer, price_is_complete=False)
-    # Act / Assert
     assert not matches(candidate, settings.filters)
 
 
@@ -385,15 +360,12 @@ def test_whitelist_is_strictly_per_provider(offer: Offer, settings: Settings) ->
     # Arrange: whitelisting wakacje.pl must not accidentally loosen any other
     # provider's requirement, even one otherwise identical in every other field.
     candidate = replace(offer, provider="itaka", price_is_complete=False, rating=5.5)
-    # Act / Assert
     assert not matches(candidate, settings.filters)
 
 
 def test_empty_whitelist_reproduces_the_original_unconditional_requirement(
     offer: Offer, settings: Settings
 ) -> None:
-    # Arrange
     settings.filters["accept_incomplete_price_from"] = []
     candidate = replace(offer, provider="wakacje.pl", price_is_complete=False, rating=8.4)
-    # Act / Assert
     assert not matches(candidate, settings.filters)

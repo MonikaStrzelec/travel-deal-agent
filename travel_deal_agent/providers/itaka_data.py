@@ -8,16 +8,13 @@ from decimal import Decimal
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urljoin, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import Field, ValidationError
 
 from ..boards import normalize_board
 from ..models import Offer
+from .boundary import Boundary, mapping
 
 logger = logging.getLogger(__name__)
-
-
-class Boundary(BaseModel):
-    model_config = ConfigDict(strict=True, extra="ignore")
 
 
 class Named(Boundary):
@@ -145,12 +142,6 @@ class ParsedPage(Boundary):
     skip: int
     take: int
     links: list[str]
-
-
-def mapping(value: object) -> dict[str, object]:
-    if not isinstance(value, dict) or any(not isinstance(k, str) for k in value):
-        raise ValueError("Expected a JSON object")
-    return {str(k): v for k, v in value.items()}
 
 
 def parse_page(html: str) -> ParsedPage:
