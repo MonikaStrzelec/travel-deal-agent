@@ -11,7 +11,7 @@ from conftest import WriteConfig
 from travel_deal_agent.config import ROOT, Settings, load_settings
 from travel_deal_agent.config_types import ProviderConfig
 from travel_deal_agent.models import Offer
-from travel_deal_agent.notifications import LogNotifier, deliver_pending
+from travel_deal_agent.notifications import ConsoleNotifier, deliver_pending
 from travel_deal_agent.providers.mock import MockProvider
 from travel_deal_agent.providers.registry import build_providers
 from travel_deal_agent.scheduler import Scheduler
@@ -102,7 +102,7 @@ def test_storage_failure_is_not_swallowed_by_scheduler(settings: Settings, store
     settings = replace(
         settings, providers={"mock": {**settings.providers["mock"], "enabled": True}}
     )
-    scheduler = Scheduler(settings, [MockProvider()], store, LogNotifier())
+    scheduler = Scheduler(settings, [MockProvider()], store, ConsoleNotifier())
     store.close()
 
     with pytest.raises(sqlite3.ProgrammingError):
@@ -113,7 +113,7 @@ def test_storage_failure_is_not_swallowed_by_delivery(store: Store) -> None:
     store.close()
 
     with pytest.raises(sqlite3.ProgrammingError):
-        deliver_pending(store, LogNotifier())
+        deliver_pending(store, ConsoleNotifier())
 
 
 @pytest.mark.parametrize("invalid_value", ["2", True, None, []])
@@ -221,7 +221,7 @@ def test_scheduler_uses_injected_calendar_and_sleep(settings: Settings, store: S
         scoped_settings,
         [MockProvider(today=lambda: today)],
         store,
-        LogNotifier(),
+        ConsoleNotifier(),
         clock=lambda: 1000,
         today=lambda: today,
         sleep=stop_after_first_wait,
@@ -236,7 +236,7 @@ def test_scheduler_uses_injected_calendar_and_sleep(settings: Settings, store: S
 
 def test_duplicate_provider_names_are_rejected(settings: Settings, store: Store) -> None:
     with pytest.raises(ValueError, match="unique"):
-        Scheduler(settings, [MockProvider(), MockProvider()], store, LogNotifier())
+        Scheduler(settings, [MockProvider(), MockProvider()], store, ConsoleNotifier())
 
 
 def test_settings_fixture_never_reads_the_production_config(
@@ -280,7 +280,7 @@ def test_invalid_source_identity_does_not_enter_results(settings: Settings, stor
     settings = replace(
         settings, providers={"mock": {**settings.providers["mock"], "enabled": True}}
     )
-    scheduler = Scheduler(settings, [MismatchedProvider()], store, LogNotifier())
+    scheduler = Scheduler(settings, [MismatchedProvider()], store, ConsoleNotifier())
 
     result = scheduler.run_once()
 

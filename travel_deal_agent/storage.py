@@ -58,22 +58,6 @@ class NotificationRetryPolicy:
 DEFAULT_NOTIFICATION_RETRY_POLICY = NotificationRetryPolicy()
 
 
-@dataclass(frozen=True)
-class PriceStats:
-    """Derived price-history facts for one stably identified (provider, offer_id).
-
-    Computed from the existing `offers`/`price_history` tables -- no
-    redundant columns. `previous_price`/`lowest_price` are `None` when there
-    is not yet a prior price to compare against.
-    """
-
-    current_price: Decimal | None
-    previous_price: Decimal | None
-    lowest_price: Decimal | None
-    first_seen: datetime
-    last_seen: datetime
-
-
 class Store:
     """Persist observations and outbox entries in the same SQLite transaction.
 
@@ -347,23 +331,6 @@ class Store:
             for row in rows
             if row["price"] is not None and row["currency"] == currency
         ]
-
-    def price_stats(self, provider: str, offer_id: str) -> PriceStats | None:
-        """Current/previous/lowest price and first/last-seen for one stably
-        identified offer, derived from the existing snapshot/history tables
-        (see `PriceStats`); `None` when this (provider, offer_id) was never observed.
-        """
-        offer = self.get_offer(provider, offer_id)
-        if offer is None:
-            return None
-        history = self._price_series(provider, offer_id, offer.currency)
-        return PriceStats(
-            current_price=offer.price_per_person,
-            previous_price=history[-2] if len(history) >= 2 else None,
-            lowest_price=min(history) if history else None,
-            first_seen=offer.found_at,
-            last_seen=offer.last_seen,
-        )
 
     def pending(self) -> list[Notification]:
         """Return undelivered outbox entries in creation order.

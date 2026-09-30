@@ -9,7 +9,7 @@ from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import RatingScale
 from travel_deal_agent.filtering import matches
 from travel_deal_agent.models import ExternalHotelRating, Offer
-from travel_deal_agent.notifications import LogNotifier
+from travel_deal_agent.notifications import ConsoleNotifier
 from travel_deal_agent.providers.base import Provider
 from travel_deal_agent.providers.external_rating import ExternalHotelRatingProvider
 from travel_deal_agent.ranking import score
@@ -245,7 +245,7 @@ def test_second_stage_only_checks_top_eligible_offers(
     )
     external = FixtureExternal(mode)
     scheduler = Scheduler(
-        settings, [FixtureProvider()], store, LogNotifier(), external_provider=external
+        settings, [FixtureProvider()], store, ConsoleNotifier(), external_provider=external
     )
     result = scheduler.run_once(force=True)
     assert len(result) == 2

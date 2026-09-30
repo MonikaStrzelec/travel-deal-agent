@@ -40,10 +40,6 @@ class ConsoleNotifier(Notifier):
         logger.info("%s", message.render(self._attractiveness_config, self._provider_ratings))
 
 
-# Preserve the public name used by existing integrations and tests.
-LogNotifier = ConsoleNotifier
-
-
 class TelegramDeliveryError(Exception):
     """A Telegram delivery failure; the message never includes the bot token.
 

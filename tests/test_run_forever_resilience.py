@@ -8,7 +8,7 @@ import pytest
 
 from travel_deal_agent.config import Settings
 from travel_deal_agent.models import Offer
-from travel_deal_agent.notifications import LogNotifier
+from travel_deal_agent.notifications import ConsoleNotifier
 from travel_deal_agent.providers.mock import MockProvider
 from travel_deal_agent.scheduler import Scheduler
 from travel_deal_agent.storage import Store
@@ -27,7 +27,7 @@ def _scheduler(settings: Settings, store: Store, waits: list[float], stop_after:
             raise KeyboardInterrupt
 
     return Scheduler(
-        scoped, [MockProvider()], store, LogNotifier(), clock=lambda: 1000, sleep=sleep
+        scoped, [MockProvider()], store, ConsoleNotifier(), clock=lambda: 1000, sleep=sleep
     )
 
 

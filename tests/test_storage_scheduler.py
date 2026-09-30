@@ -104,20 +104,6 @@ def test_price_increase_updates_history_without_alerting(offer: Offer, store: St
     ]
 
 
-def test_historical_minimum_is_correctly_calculated(offer: Offer, store: Store) -> None:
-    store.observe(offer, True)
-    store.observe(replace(offer, price_per_person=Decimal("1199")), True)
-    store.observe(replace(offer, price_per_person=Decimal("1400")), True)
-
-    stats = store.price_stats(offer.provider, offer.offer_id)
-
-    assert stats is not None
-    assert stats.current_price == Decimal("1400")
-    assert stats.previous_price == Decimal("1199")
-    assert stats.lowest_price == Decimal("1199")
-    assert stats.first_seen <= stats.last_seen
-
-
 def test_unchanged_offer_is_not_realerted_on_later_hourly_scans(
     offer: Offer, settings: Settings
 ) -> None:

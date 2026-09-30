@@ -12,7 +12,7 @@ from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import ProviderConfig
 from travel_deal_agent.models import Offer, duplicate_key
 from travel_deal_agent.notification_content import NotificationMessage
-from travel_deal_agent.notifications import LogNotifier, Notifier
+from travel_deal_agent.notifications import ConsoleNotifier, Notifier
 from travel_deal_agent.providers.base import Provider
 from travel_deal_agent.providers.tui import TuiProvider
 from travel_deal_agent.providers.tui_data import normalize_offer
@@ -129,7 +129,7 @@ def run_tui_only(settings: Settings, store: Store, provider: TuiProvider) -> lis
         scoped_settings,
         [FixtureTuiSource(provider)],
         store,
-        LogNotifier(),
+        ConsoleNotifier(),
         today=lambda: NOW.date(),
     )
     return scheduler.run_once(force=True)
@@ -346,10 +346,6 @@ def test_tui_price_history_drives_new_new_low_and_price_drop_alerts(
 
     prices = store.price_history("tui", str(RAW_OFFER["offerCode"]))
     assert prices == [Decimal("1250"), Decimal("1130"), Decimal("1330"), Decimal("1280")]
-
-    stats = store.price_stats("tui", str(RAW_OFFER["offerCode"]))
-    assert stats is not None
-    assert stats.lowest_price == Decimal("1130")
 
     new_offer_text = dict(notifier.sent)["new_offer"]
     new_low_text = dict(notifier.sent)["new_low"]
