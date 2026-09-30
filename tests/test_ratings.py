@@ -163,10 +163,17 @@ def test_cross_scale_ranking_and_google(offer: Offer, settings: Settings) -> Non
     b = replace(offer, provider="wakacje.pl", rating=8)
     assert score(a, ranking, "1500") == pytest.approx(score(b, ranking, "1500"))
     assert score(replace(a, provider="itaka"), ranking, "1500") == pytest.approx(0.76)
-    ranking["weights"]["google_rating"] = 1
-    ranking["weights"]["google_reviews"] = 1
+    # `ranking.external_sources.google` (already enabled in the test config)
+    # is the one generic mechanism external evidence flows through -- see
+    # `providers/external_rating.py` and `ranking.score`'s docstring.
     verified = replace(
-        a, external_rating_status="verified", google_rating={"rating": 5, "number_of_reviews": 100}
+        a,
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google", 5, 1, 5, 100, a.hotel_name or "", a.country, 0.95, a.destination
+            )
+        },
+        external_verification_statuses={"google": "verified"},
     )
     assert score(verified, ranking, "1500") > score(a, ranking, "1500")
 
@@ -243,9 +250,9 @@ def test_second_stage_only_checks_top_eligible_offers(
     result = scheduler.run_once(force=True)
     assert len(result) == 2
     assert external.calls == ([offer.offer_id] if enabled else [])
-    expected = "verified" if enabled and mode == "ok" else "external rating not verified"
-    assert result[0].external_rating_status == expected
+    expected_verified = enabled and mode == "ok"
+    assert bool(result[0].hotel_ratings) == expected_verified
     stored = store.get_offer("rainbow", offer.offer_id)
     assert stored is not None
-    assert stored.external_rating_status == expected
-    assert result[1].external_rating_status == "external rating not verified"
+    assert bool(stored.hotel_ratings) == expected_verified
+    assert not result[1].hotel_ratings

@@ -3,8 +3,9 @@
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 
+from . import watchlist
 from .config import Settings
 from .filtering import matches
 from .models import Offer
@@ -18,6 +19,21 @@ from .ranking import deduplicate, rank_offers, score
 from .storage import Store
 
 logger = logging.getLogger(__name__)
+
+
+def _default_google_provider(settings: Settings, store: Store) -> GoogleRatingProvider:
+    """Wire the real Google provider to this run's cache store and configured
+    scale/TTL (see `config_types.ExternalSourceConfig`); a source absent from
+    configuration falls back to the provider's own defaults."""
+    policy = settings.external_verification.get("sources", {}).get("google")
+    if policy is None:
+        return GoogleRatingProvider(store=store)
+    return GoogleRatingProvider(
+        store=store,
+        cache_ttl=timedelta(hours=policy["cache_ttl_hours"]),
+        scale_min=policy["scale"]["min"],
+        scale_max=policy["scale"]["max"],
+    )
 
 
 class OfferPipeline:
@@ -41,7 +57,7 @@ class OfferPipeline:
             else (
                 [external_provider]
                 if external_provider is not None
-                else [GoogleRatingProvider(), TripadvisorRatingProvider()]
+                else [_default_google_provider(settings, store), TripadvisorRatingProvider()]
             )
         )
         if len({p.source for p in self.external_providers}) != len(self.external_providers):
@@ -61,18 +77,44 @@ class OfferPipeline:
                 self.store.observe(offer, False)
         return accepted
 
-    def finalize(self, offers: list[Offer]) -> list[Offer]:
-        """Verify only top eligible candidates, then save and rank final results."""
-        offers = [
-            replace(
-                o,
-                hotel_ratings={},
-                external_verification_statuses={},
-                google_rating=None,
-                external_rating_status="external rating not verified",
-            )
-            for o in offers
-        ]
+    def filter_watchlist_batch(
+        self, name: str, offers: list[Offer], already_accepted: list[Offer]
+    ) -> list[Offer]:
+        """Match this provider's raw batch against the hotel watchlist.
+
+        Entirely independent of `filter_batch`'s standard eligibility: each
+        watched hotel has its own price ceiling, stay length and airport
+        rules (see `watchlist.py`), never `self.settings.filters["max_price"]`
+        or the board/rating/star rules. Offers already accepted by the
+        standard search are excluded here so the same offer is never
+        notified twice for happening to satisfy both.
+        """
+        already_accepted_ids = {(o.provider, o.offer_id) for o in already_accepted}
+        accept_incomplete = self.settings.filters.get("accept_incomplete_price_from", [])
+        today = self.today()
+        accepted = []
+        for offer in offers:
+            if offer.provider != name or (offer.provider, offer.offer_id) in already_accepted_ids:
+                continue
+            if watchlist.matches_any(
+                offer, self.settings.hotel_watchlist, accept_incomplete, today
+            ):
+                accepted.append(offer)
+        return accepted
+
+    def finalize(
+        self, offers: list[Offer], watchlist_offer_ids: frozenset[tuple[str, str]] = frozenset()
+    ) -> list[Offer]:
+        """Verify only top eligible candidates, then save and rank final results.
+
+        `watchlist_offer_ids` marks which of `offers` were found via the hotel
+        watchlist rather than the standard search (see
+        `filter_watchlist_batch`); it only tags the stored alert `kind` (see
+        `Store.observe`) so notification rendering can skip the HOT/GOOD/MATCH
+        attractiveness category for a watched-hotel alert. It never changes
+        ranking, deduplication or eligibility.
+        """
+        offers = [replace(o, hotel_ratings={}, external_verification_statuses={}) for o in offers]
         preliminary = self._rank(deduplicate(offers))
         limit = self.settings.external_verification["max_candidates"]
         verified = {
@@ -90,9 +132,11 @@ class OfferPipeline:
                 offer,
                 final_score=score(offer, self.settings.ranking, self.settings.filters["max_price"]),
                 provider_rating_max=scale["max"] if scale else None,
-                google_rating_max=self.settings.external_verification["scale"]["max"],
             )
-            for event in self.store.observe(offer, True):
+            kind_prefix = (
+                "watchlist_" if (offer.provider, offer.offer_id) in watchlist_offer_ids else ""
+            )
+            for event in self.store.observe(offer, True, kind_prefix=kind_prefix):
                 logger.info(
                     "%s: %s/%s price=%s",
                     event,

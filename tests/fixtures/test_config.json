@@ -159,7 +159,8 @@
         },
         "min_confidence": 0.9,
         "rating_weight": 2,
-        "reviews_weight": 0.5
+        "reviews_weight": 0.5,
+        "cache_ttl_hours": 24
       },
       "tripadvisor": {
         "enabled": true,
@@ -169,7 +170,8 @@
         },
         "min_confidence": 0.9,
         "rating_weight": 2,
-        "reviews_weight": 0.5
+        "reviews_weight": 0.5,
+        "cache_ttl_hours": 24
       }
     },
     "scale": {

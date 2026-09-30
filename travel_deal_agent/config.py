@@ -1,12 +1,15 @@
 """Load typed configuration and validate business constraints at startup."""
 
+import logging
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
@@ -21,12 +24,14 @@ from .config_types import (
     AttractivenessConfig,
     ExternalConfig,
     FilterConfig,
+    HotelWatchlistEntry,
     ProviderConfig,
     RankingConfig,
     SchedulerConfig,
 )
 from .ratings import validate_rating_rules
 
+logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -45,6 +50,7 @@ class Settings:
     active_hours: ActiveHoursConfig
     attractiveness: AttractivenessConfig
     price_drop_threshold: PriceDropThreshold
+    hotel_watchlist: list[HotelWatchlistEntry]
 
 
 @dataclass(frozen=True)
@@ -131,6 +137,89 @@ def validate_options(raw: AppConfig) -> None:
     validate_attractiveness_config(raw["attractiveness"])
 
 
+def _validate_hotel_watchlist(entries: list[HotelWatchlistEntry]) -> None:
+    """Each watched hotel is independently configured; none of this ever
+    reads or changes `filters` (see `watchlist.py`).
+
+    Called from `load_hotel_watchlist` (its own file, `hotel_watchlist.json`),
+    never from `validate_options`/`config.json` -- see that function's
+    docstring for why a bad entry here degrades gracefully instead of
+    stopping the whole application.
+    """
+    seen_names: set[str] = set()
+    for entry in entries:
+        name = entry["name"].strip()
+        if not name:
+            raise ValueError("hotel_watchlist entries require a non-empty name")
+        if name in seen_names:
+            raise ValueError(f"Duplicate hotel_watchlist name: {name}")
+        seen_names.add(name)
+        if any(not alias.strip() for alias in entry["aliases"]):
+            raise ValueError(f"hotel_watchlist entry {name!r} has an empty alias")
+        if entry["people"] < 1:
+            raise ValueError(f"hotel_watchlist entry {name!r} requires a positive people count")
+        positive_decimal(entry["max_price_per_person"])
+        minimum_nights, maximum_nights = entry.get("min_nights"), entry.get("max_nights")
+        if minimum_nights is not None and minimum_nights < 1:
+            raise ValueError(f"hotel_watchlist entry {name!r}: min_nights must be null or positive")
+        if maximum_nights is not None and maximum_nights < 1:
+            raise ValueError(f"hotel_watchlist entry {name!r}: max_nights must be null or positive")
+        if (
+            minimum_nights is not None
+            and maximum_nights is not None
+            and maximum_nights < minimum_nights
+        ):
+            raise ValueError(
+                f"hotel_watchlist entry {name!r}: max_nights must be at least min_nights"
+            )
+        if not entry["airports"]:
+            raise ValueError(f"hotel_watchlist entry {name!r} requires at least one airport")
+        country = entry.get("country")
+        if country is not None and (len(country) != 2 or not country.isupper()):
+            raise ValueError(
+                f"hotel_watchlist entry {name!r}: country must be a 2-letter uppercase code"
+            )
+        for provider_name, listing_url in entry.get("provider_listings", {}).items():
+            _validate_watchlist_listing_url(name, provider_name, listing_url)
+        for provider_name, code in entry.get("provider_destinations", {}).items():
+            pattern, description = _DESTINATION_PATTERNS.get(provider_name, _OTHER_DESTINATION)
+            if not pattern.fullmatch(code):
+                raise ValueError(
+                    f"hotel_watchlist entry {name!r}: provider_destinations.{provider_name} "
+                    f"must be {description}"
+                )
+
+
+# Per-provider shape of `provider_destinations` values: TUI destination codes
+# (e.g. HRG) and ITAKA country path slugs (e.g. a lowercase, hyphenated name).
+_DESTINATION_PATTERNS = {
+    "tui": (re.compile(r"[A-Z0-9]{2,8}"), "2-8 uppercase letters or digits"),
+    "itaka": (re.compile(r"[a-z0-9-]{2,40}"), "a lowercase slug (letters, digits, hyphens)"),
+}
+_OTHER_DESTINATION = (re.compile(r"[A-Za-z0-9-]{1,40}"), "letters, digits or hyphens")
+
+# Known provider -> the exact host its `provider_listings` URL must use.
+# Defense-in-depth against a copy-paste mistake sending this project's HTTP
+# client to an unintended host; a provider absent here (none yet besides
+# wakacje.pl) is only checked for being a well-formed https URL below.
+_PROVIDER_LISTING_HOSTS = {"wakacje.pl": "www.wakacje.pl"}
+
+
+def _validate_watchlist_listing_url(hotel_name: str, provider_name: str, url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError(
+            f"hotel_watchlist entry {hotel_name!r}: provider_listings.{provider_name} "
+            "must be a full https:// URL"
+        )
+    expected_host = _PROVIDER_LISTING_HOSTS.get(provider_name)
+    if expected_host is not None and parsed.netloc != expected_host:
+        raise ValueError(
+            f"hotel_watchlist entry {hotel_name!r}: provider_listings.{provider_name} "
+            f"must be a {expected_host} URL"
+        )
+
+
 def _validate_price_history(raw: AppConfig) -> None:
     if type(raw["alert_rearm_hours"]) is not int or raw["alert_rearm_hours"] <= 0:
         raise ValueError("alert_rearm_hours must be a positive whole number of hours")
@@ -199,6 +288,8 @@ def _validate_external_verification(external: ExternalConfig) -> None:
             for weight in (policy["rating_weight"], policy["reviews_weight"])
         ):
             raise ValueError("Invalid external ranking weight")
+        if policy["cache_ttl_hours"] <= 0:
+            raise ValueError("External source cache_ttl_hours must be positive")
     if external["max_candidates"] < 0:
         raise ValueError("Invalid external candidate limit")
 
@@ -235,6 +326,9 @@ def _validate_provider_limits(provider_name: str, provider: ProviderConfig) -> N
             raise ValueError("TUI max_pages must not be null (no unlimited pagination)")
         if pages > 3:
             raise ValueError("TUI max_pages must be at most 3 (browser navigation budget)")
+        watchlist_pages = provider.get("watchlist_max_pages", 1)
+        if not 1 <= watchlist_pages <= 3:
+            raise ValueError("TUI watchlist_max_pages must be between 1 and 3 (browser budget)")
     if (
         min(
             provider.get("max_requests", 3),
@@ -261,6 +355,41 @@ def _validate_provider_limits(provider_name: str, provider: ProviderConfig) -> N
 def _validate_scheduler(scheduler: SchedulerConfig) -> None:
     if scheduler["idle_poll_seconds"] < 1 or not 0 <= scheduler["max_backoff_exponent"] <= 20:
         raise ValueError("Invalid scheduler timing settings")
+
+
+def load_hotel_watchlist(path: Path) -> list[HotelWatchlistEntry]:
+    """Read the independently maintained watched-hotel list from its own file.
+
+    This is the one place to add, remove or replace a watched hotel: editing
+    `hotel_watchlist.json` never requires a code change (see `watchlist.py`
+    and `config_types.HotelWatchlistEntry`). Deliberately kept out of
+    `config.json`/`AppConfig` so the standard search's own configuration
+    never depends on this file, and so this file's presence or shape can
+    change without touching config.json at all.
+
+    A missing file is the normal "no active watchlist" state (same as an
+    empty list in it) -- logged for visibility, not an error. A malformed
+    file (invalid JSON, wrong types, a failed `_validate_hotel_watchlist`
+    check) is logged clearly and also degrades to an empty list rather than
+    raising: the standard search must never depend on this file, so a typo in
+    it can never stop the whole application.
+    """
+    if not path.exists():
+        logger.info("No hotel watchlist configured (%s not found)", path)
+        return []
+    try:
+        entries = TypeAdapter(list[HotelWatchlistEntry]).validate_json(
+            path.read_text(encoding="utf-8-sig"), strict=True
+        )
+        _validate_hotel_watchlist(entries)
+    except (ValueError, OSError) as exc:
+        logger.error(
+            "Invalid hotel watchlist (%s); watchlist disabled, standard search unaffected: %s",
+            path,
+            exc,
+        )
+        return []
+    return entries
 
 
 def load_settings() -> Settings:
@@ -317,4 +446,5 @@ def load_settings() -> Settings:
         PriceDropThreshold(
             Decimal(raw["price_drop_min_amount"]), Decimal(str(raw["price_drop_min_percent"]))
         ),
+        load_hotel_watchlist(ROOT / os.getenv("TDA_HOTEL_WATCHLIST", "hotel_watchlist.json")),
     )

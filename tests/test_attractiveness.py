@@ -19,7 +19,7 @@ from travel_deal_agent.attractiveness import (
 from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import AttractivenessConfig, RatingRule
 from travel_deal_agent.filtering import matches
-from travel_deal_agent.models import Offer
+from travel_deal_agent.models import ExternalHotelRating, Offer
 
 WAKACJE_RULE: RatingRule = {"enabled": True, "scale": {"min": 0, "max": 10}, "price_bands": []}
 ITAKA_RULE: RatingRule = {"enabled": True, "scale": {"min": 1, "max": 6}, "price_bands": []}
@@ -129,9 +129,12 @@ def test_missing_google_or_tripadvisor_never_affects_hotel_quality(offer: Offer)
     base = replace(offer, provider="wakacje.pl", rating=8.0, hotel_stars=4)
     with_google = replace(
         base,
-        google_rating={"rating": 4.9},
-        google_rating_max=5,
-        external_rating_status="verified",
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google", 4.9, 1, 5, 12000, base.hotel_name or "", None, 1
+            )
+        },
+        external_verification_statuses={"google": "verified"},
     )
     assert classify_hotel_quality(
         base, rule, DEFAULT_ATTRACTIVENESS_CONFIG

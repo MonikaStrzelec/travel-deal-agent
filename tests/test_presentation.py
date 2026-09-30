@@ -4,30 +4,33 @@ import pytest
 
 from travel_deal_agent.config import Settings
 from travel_deal_agent.config_types import RatingRule
-from travel_deal_agent.models import Offer
+from travel_deal_agent.models import ExternalHotelRating, Offer
 from travel_deal_agent.presentation import format_ratings
 from travel_deal_agent.ratings import validate_rating_rules
 
 
 def test_native_and_google_display(offer: Offer, settings: Settings) -> None:
+    evidence = ExternalHotelRating(
+        "google", 4.4, 1, 5, 100, offer.hotel_name or "", offer.country, 0.95, offer.destination
+    )
     candidate = replace(
         offer,
         provider="itaka",
         rating=5.3,
-        external_rating_status="verified",
-        google_rating={"rating": 4.4},
+        hotel_ratings={"google": evidence},
+        external_verification_statuses={"google": "verified"},
     )
     assert (
         format_ratings(candidate, settings.ranking)
         == "ITAKA: 5.3/6 | Google: 4.4/5 | Tripadvisor: brak danych"
     )
     assert (
-        format_ratings(replace(candidate, google_rating=None), settings.ranking)
+        format_ratings(replace(candidate, hotel_ratings={}), settings.ranking)
         == "ITAKA: 5.3/6 | Google: brak danych | Tripadvisor: brak danych"
     )
     assert (
         format_ratings(
-            replace(candidate, external_rating_status="external rating not verified"),
+            replace(candidate, external_verification_statuses={"google": "rejected_match"}),
             settings.ranking,
         )
         == "ITAKA: 5.3/6 | Google: brak danych | Tripadvisor: brak danych"

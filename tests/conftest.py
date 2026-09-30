@@ -30,6 +30,24 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("travel_deal_agent.providers.tui_browser.sync_playwright", blocked)
 
 
+@pytest.fixture(autouse=True)
+def no_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real local .env must never make a test call the live Google Places API.
+
+    `config.load_settings()` calls `load_dotenv(..., override=False)`, which
+    would otherwise leak a developer's real key from `.env` into the process
+    environment for the rest of the test session. Individual Google tests
+    that need a key set it explicitly via `monkeypatch.setenv`.
+
+    Deliberately `setenv("", ...)`, not `delenv`: `load_dotenv(override=False)`
+    only skips a key that is already *present* in `os.environ` -- an unset key
+    is still filled in from `.env` on the next `load_settings()` call, which
+    would silently undo a `delenv` the moment any fixture in this test loads
+    settings.
+    """
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "")
+
+
 TEST_CONFIG = Path(__file__).resolve().parent / "fixtures" / "test_config.json"
 
 RawConfig = dict[str, Any]
@@ -40,6 +58,10 @@ def _use_config(path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("TDA_CONFIG", str(path))
     monkeypatch.setenv("TDA_DATABASE", str(tmp_path / "offers.sqlite3"))
     monkeypatch.setenv("TDA_LOG_LEVEL", "INFO")
+    # Points at a file that does not exist by default (the normal "no active
+    # watchlist" state) -- never the real project's hotel_watchlist.json.
+    # See `write_hotel_watchlist` for tests that need one to exist.
+    monkeypatch.setenv("TDA_HOTEL_WATCHLIST", str(tmp_path / "hotel_watchlist.json"))
 
 
 @pytest.fixture
@@ -70,6 +92,28 @@ def write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WriteConfig
         path = tmp_path / "config.json"
         path.write_text(json.dumps(raw), encoding="utf-8")
         _use_config(path, tmp_path, monkeypatch)
+        return path
+
+    return write
+
+
+WriteHotelWatchlist = Callable[[object], Path]
+
+
+@pytest.fixture
+def write_hotel_watchlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WriteHotelWatchlist:
+    """Write `content` (typically a list of watchlist entries, or raw text via
+    a plain string) as this test's hotel_watchlist.json.
+
+    Independent of `write_config`/`settings`: those already point
+    TDA_HOTEL_WATCHLIST at `tmp_path / "hotel_watchlist.json"` (a path that
+    does not exist by default); this only creates that file.
+    """
+
+    def write(content: object) -> Path:
+        path = tmp_path / "hotel_watchlist.json"
+        path.write_text(content if isinstance(content, str) else json.dumps(content), "utf-8")
+        monkeypatch.setenv("TDA_HOTEL_WATCHLIST", str(path))
         return path
 
     return write

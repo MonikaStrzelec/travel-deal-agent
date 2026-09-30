@@ -12,7 +12,8 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from .alerts import NO_MINIMUM_DROP, PriceDropThreshold, classify_alert
-from .models import Offer, duplicate_key, utc_now
+from .models import ExternalHotelRating, Offer, duplicate_key, utc_now
+from .watchlist import normalize_hotel_name
 
 
 class Notification(TypedDict):
@@ -123,6 +124,14 @@ class Store:
             CREATE TABLE IF NOT EXISTS provider_runs (
                 provider TEXT PRIMARY KEY, next_run REAL NOT NULL, failures INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS hotel_rating_cache (
+                source TEXT NOT NULL, hotel_key TEXT NOT NULL,
+                rating REAL NOT NULL, scale_min REAL NOT NULL, scale_max REAL NOT NULL,
+                number_of_reviews INTEGER, matched_hotel_name TEXT NOT NULL,
+                country TEXT, location TEXT, external_id TEXT, confidence REAL NOT NULL,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY(source, hotel_key)
+            );
         """)
         columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(alert_state)")}
         if "last_eligible_at" not in columns:
@@ -154,18 +163,26 @@ class Store:
         """Release the connection, including when used as a context manager."""
         self.connection.close()
 
-    def observe(self, offer: Offer, eligible: bool) -> list[str]:
+    def observe(self, offer: Offer, eligible: bool, kind_prefix: str = "") -> list[str]:
         """Record one observation atomically and return resulting event names.
 
         `eligible` is trusted as-is: it must already be the result of
-        `filtering.matches(offer, filters)` (see `OfferPipeline.filter_batch`/
-        `finalize`), which is the single place that decides both business
-        eligibility and whether an incomplete price is acceptable for this
-        offer's provider (`filters["accept_incomplete_price_from"]`). Storage
-        is a persistence boundary, not a policy layer: it does not re-derive
-        that business decision from `offer.price_is_complete` or from
-        business configuration, to avoid a second, driftable copy of the same
-        rule. `pipeline.py`'s contract test pins this invariant.
+        `filtering.matches(offer, filters)` for the standard search, or of
+        `watchlist.matches(offer, entry, ...)` for a watched hotel (see
+        `OfferPipeline.filter_batch`/`filter_watchlist_batch`/`finalize`) --
+        either is the single place that decides both business eligibility and
+        whether an incomplete price is acceptable for this offer's provider
+        (`filters["accept_incomplete_price_from"]`). Storage is a persistence
+        boundary, not a policy layer: it does not re-derive that business
+        decision from `offer.price_is_complete` or from business
+        configuration, to avoid a second, driftable copy of the same rule.
+        `pipeline.py`'s contract test pins this invariant.
+
+        `kind_prefix` only tags the stored alert `kind` (e.g. "watchlist_"),
+        purely so notification rendering can tell which search found the
+        offer (see `notification_content.py`); it never affects eligibility,
+        classification or the `alert_state`/re-arm grouping below, which stay
+        keyed on the offer itself, independent of which search found it.
         """
         if eligible and offer.price_per_person is None:
             raise ValueError("An eligible offer must have a price")
@@ -196,7 +213,7 @@ class Store:
                 if previous is not None:
                     events.append("price_changed")
             if eligible:
-                kind = self._enqueue_alert(snapshot, previous_price, lowest_price)
+                kind = self._enqueue_alert(snapshot, previous_price, lowest_price, kind_prefix)
                 if kind:
                     events.append(kind)
         return events
@@ -229,7 +246,11 @@ class Store:
         )
 
     def _enqueue_alert(
-        self, offer: Offer, previous_price: Decimal | None, lowest_price: Decimal | None
+        self,
+        offer: Offer,
+        previous_price: Decimal | None,
+        lowest_price: Decimal | None,
+        kind_prefix: str = "",
     ) -> str | None:
         """Queue at most one alert per eligible observation of an offer group.
 
@@ -242,6 +263,10 @@ class Store:
         is unrelated to them -- it is the group-level (`duplicate_key`)
         "has this offer group ever been alerted before" marker that
         `classify_alert` uses only for `new_offer`/`returned`.
+
+        `kind_prefix` (see `observe`) is applied only to the stored/returned
+        `kind` string, never to `classify_alert`'s own decision or to the
+        `alert_state` baseline.
         """
         if offer.price_per_person is None:
             raise ValueError("An alert requires a price")
@@ -270,10 +295,11 @@ class Store:
         )
         seen = offer.last_seen.isoformat()
         if kind:
+            stored_kind = kind_prefix + kind
             self.connection.execute(
                 "INSERT INTO notifications(kind,payload,previous_price,created_at) VALUES (?,?,?,?)",
                 (
-                    kind,
+                    stored_kind,
                     offer.to_json(),
                     str(previous_price) if kind in ("price_drop", "new_low") else None,
                     seen,
@@ -283,11 +309,11 @@ class Store:
                 "INSERT OR REPLACE INTO alert_state VALUES (?,?,?)",
                 (key, str(offer.price_per_person), seen),
             )
-        else:
-            self.connection.execute(
-                "UPDATE alert_state SET last_eligible_at=? WHERE group_key=?", (seen, key)
-            )
-        return kind
+            return stored_kind
+        self.connection.execute(
+            "UPDATE alert_state SET last_eligible_at=? WHERE group_key=?", (seen, key)
+        )
+        return None
 
     def get_offer(self, provider: str, offer_id: str) -> Offer | None:
         """Retrieve the latest snapshot of a source-specific trip variant."""
@@ -371,20 +397,26 @@ class Store:
                 (utc_now().isoformat(), notification_id),
             )
 
-    def mark_retry(self, notification_id: int) -> None:
+    def mark_retry(self, notification_id: int, min_delay_seconds: float | None = None) -> None:
         """Record one failed delivery attempt and schedule the next one.
 
         See `NotificationRetryPolicy`: the first failure retries immediately
         (on the next `pending()` call); only repeated, consecutive failures
         back off, and delivery is abandoned (never deleted) once
-        `max_attempts` is reached.
+        `max_attempts` is reached. `min_delay_seconds` (e.g. Telegram's
+        `retry_after`) raises the delay to at least that long, capped at the
+        policy's `max_delay`; the attempt still counts against `max_attempts`.
         """
         with self.connection:
             row = self.connection.execute(
                 "SELECT attempt_count FROM notifications WHERE id=?", (notification_id,)
             ).fetchone()
             attempt_count = row["attempt_count"] + 1
-            next_attempt_at = self.clock() + self.notification_retry_policy.delay_for(attempt_count)
+            delay = self.notification_retry_policy.delay_for(attempt_count)
+            if min_delay_seconds is not None:
+                requested = timedelta(seconds=min_delay_seconds)
+                delay = max(delay, min(requested, self.notification_retry_policy.max_delay))
+            next_attempt_at = self.clock() + delay
             self.connection.execute(
                 "UPDATE notifications SET attempt_count=?, next_attempt_at=? WHERE id=?",
                 (attempt_count, next_attempt_at.isoformat(), notification_id),
@@ -400,4 +432,63 @@ class Store:
         with self.connection:
             self.connection.execute(
                 "INSERT OR REPLACE INTO provider_runs VALUES (?,?,?)", (name, next_run, failures)
+            )
+
+    def _hotel_cache_key(self, hotel_name: str, country: str) -> str:
+        """A hotel, not an offer or a travel date: normalized name + country.
+
+        Reuses `watchlist.normalize_hotel_name` rather than a second,
+        near-identical normalization function (see that module).
+        """
+        return f"{normalize_hotel_name(hotel_name)}|{country}"
+
+    def get_cached_hotel_rating(
+        self, source: str, hotel_name: str, country: str, ttl: timedelta
+    ) -> ExternalHotelRating | None:
+        """A still-fresh cached rating for this hotel, or `None` on a miss or
+        expired entry -- callers query their source again in either case."""
+        key = self._hotel_cache_key(hotel_name, country)
+        row = self.connection.execute(
+            "SELECT * FROM hotel_rating_cache WHERE source=? AND hotel_key=?", (source, key)
+        ).fetchone()
+        if row is None or self.clock() - datetime.fromisoformat(row["fetched_at"]) > ttl:
+            return None
+        return ExternalHotelRating(
+            source=source,
+            rating=row["rating"],
+            scale_min=row["scale_min"],
+            scale_max=row["scale_max"],
+            number_of_reviews=row["number_of_reviews"],
+            matched_hotel_name=row["matched_hotel_name"],
+            country=row["country"],
+            confidence=row["confidence"],
+            location=row["location"],
+            external_id=row["external_id"],
+        )
+
+    def save_cached_hotel_rating(
+        self, source: str, hotel_name: str, country: str, rating: ExternalHotelRating
+    ) -> None:
+        """Cache one confidently matched rating, keyed by hotel (not offer).
+
+        Callers save only a confident, unambiguous match here (an unresolved
+        lookup is simply not cached, and is retried on the next request)."""
+        key = self._hotel_cache_key(hotel_name, country)
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO hotel_rating_cache VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    source,
+                    key,
+                    rating.rating,
+                    rating.scale_min,
+                    rating.scale_max,
+                    rating.number_of_reviews,
+                    rating.matched_hotel_name,
+                    rating.country,
+                    rating.location,
+                    rating.external_id,
+                    rating.confidence,
+                    self.clock().isoformat(),
+                ),
             )

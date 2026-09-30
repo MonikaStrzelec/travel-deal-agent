@@ -25,7 +25,7 @@ from .ratings import normalize_rating
 Level = Literal["strong", "normal", "weak", "neutral"]
 Attractiveness = Literal["HOT", "GOOD", "MATCH"]
 
-# V0 starting values, agreed with the project owner. Deliberately easy to
+# Initial starting values. Deliberately easy to
 # retune from config.json once more real, cross-provider data (ITAKA, more
 # boards, an LCJ departure, ...) exists -- see README "Attractiveness
 # classification". Mirrors config.json's "attractiveness" section exactly;

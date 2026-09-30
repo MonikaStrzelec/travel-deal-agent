@@ -9,7 +9,7 @@ import pytest
 
 from travel_deal_agent.boards import CANONICAL_BOARDS
 from travel_deal_agent.config import Settings
-from travel_deal_agent.models import LocalMandatoryCost, Offer, OperatorFee
+from travel_deal_agent.models import ExternalHotelRating, LocalMandatoryCost, Offer, OperatorFee
 from travel_deal_agent.notification_content import BOARD_LABELS_PL, NotificationMessage
 from travel_deal_agent.notifications import ConsoleNotifier, deliver_pending
 from travel_deal_agent.pipeline import OfferPipeline
@@ -25,9 +25,21 @@ def test_full_message_contains_offer_details(
         provider="itaka",
         rating=5.3,
         provider_rating_max=6,
-        google_rating={"rating": 4.4},
-        google_rating_max=5,
-        external_rating_status="verified",
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google",
+                4.4,
+                1,
+                5,
+                12430,
+                offer.hotel_name or "",
+                offer.country,
+                0.95,
+                offer.destination,
+                "fixture-place-id",
+            )
+        },
+        external_verification_statuses={"google": "verified"},
         final_score=5.25,
     )
     store.observe(candidate, True)
@@ -41,7 +53,7 @@ def test_full_message_contains_offer_details(
         # -- two strong areas, no weak one -- is exactly the HOT combination.
         "🔥 NOWA • Szczególnie ciekawa",
         "🏨 Sunny Demo ★★★ • Grecja • Crete",
-        "⭐ 5,3/6 (Google: 4,4/5)",
+        "⭐ ITAKA: 5,3/6 (150 opinii) | Google: 4,4/5 (12 430 opinii)",
         "🍽 all_inclusive",
         "💰 1299 zł/os. (2598 zł / 2 osoby) • 217 zł/os./noc",
         "🛫 Łódź • 7 dni / 6 nocy",
@@ -97,8 +109,144 @@ def test_every_canonical_board_has_a_polish_label() -> None:
     assert set(BOARD_LABELS_PL) == CANONICAL_BOARDS
 
 
+def test_native_and_google_ratings_render_pipe_separated_with_provider_label(
+    offer: Offer, store: Store
+) -> None:
+    """The agreed compact format: `⭐ <Provider>: <native> (<n> opinii) | Google:
+    <rating> (<n> opinii)`, thousands-grouped review counts, no separate
+    Google section."""
+    candidate = replace(
+        offer,
+        provider="wakacje.pl",
+        rating=9.0,
+        provider_rating_max=10,
+        number_of_reviews=905,
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google",
+                4.7,
+                1,
+                5,
+                26384,
+                offer.hotel_name or "",
+                offer.country,
+                0.95,
+                offer.destination,
+                "fixture-place-id",
+            )
+        },
+        external_verification_statuses={"google": "verified"},
+    )
+    store.observe(candidate, True)
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+    assert "⭐ Wakacje.pl: 9,0/10 (905 opinii) | Google: 4,7/5 (26 384 opinii)" in message
+
+
+def test_missing_native_review_count_is_simply_omitted(offer: Offer, store: Store) -> None:
+    candidate = replace(
+        offer,
+        provider="wakacje.pl",
+        rating=9.0,
+        provider_rating_max=10,
+        number_of_reviews=None,
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google",
+                4.7,
+                1,
+                5,
+                26384,
+                offer.hotel_name or "",
+                offer.country,
+                0.95,
+                offer.destination,
+                "fixture-place-id",
+            )
+        },
+        external_verification_statuses={"google": "verified"},
+    )
+    store.observe(candidate, True)
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+    assert "⭐ Wakacje.pl: 9,0/10 | Google: 4,7/5 (26 384 opinii)" in message
+    assert "None" not in message
+
+
+def test_google_review_count_shown_when_available(offer: Offer, store: Store) -> None:
+    with_reviews = replace(
+        offer,
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google",
+                4.7,
+                1,
+                5,
+                12430,
+                offer.hotel_name or "",
+                offer.country,
+                0.95,
+                offer.destination,
+                "fixture-place-id",
+            )
+        },
+        external_verification_statuses={"google": "verified"},
+    )
+    store.observe(with_reviews, True)
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+    assert "Google: 4,7/5 (12 430 opinii)" in message
+
+
+def test_google_review_count_omitted_when_unavailable(offer: Offer, store: Store) -> None:
+    without_reviews = replace(
+        offer,
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google",
+                4.7,
+                1,
+                5,
+                None,
+                offer.hotel_name or "",
+                offer.country,
+                0.95,
+                offer.destination,
+                "fixture-place-id",
+            )
+        },
+        external_verification_statuses={"google": "verified"},
+    )
+    store.observe(without_reviews, True)
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+    assert "Google: 4,7/5" in message
+    assert "Google: 4,7/5 (" not in message
+    assert "None" not in message
+
+
+def test_missing_google_leaves_the_message_otherwise_normal(offer: Offer, store: Store) -> None:
+    store.observe(offer, True)
+    message = NotificationMessage.from_notification(store.pending()[0]).render()
+    assert "Google" not in message
+    assert f"⭐ {offer.provider}: {offer.rating:.1f}".replace(".", ",") in message
+
+
 def test_unverified_google_data_is_not_shown(offer: Offer, store: Store) -> None:
-    candidate = replace(offer, google_rating={"rating": 4.9}, google_rating_max=5)
+    candidate = replace(
+        offer,
+        hotel_ratings={
+            "google": ExternalHotelRating(
+                "google",
+                4.9,
+                1,
+                5,
+                500,
+                offer.hotel_name or "",
+                offer.country,
+                0.95,
+                offer.destination,
+                "fixture-place-id",
+            )
+        },
+        external_verification_statuses={"google": "rejected_match"},
+    )
     store.observe(candidate, True)
 
     message = NotificationMessage.from_notification(store.pending()[0]).render()

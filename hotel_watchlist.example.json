@@ -1,0 +1,21 @@
+[
+  {
+    "name": "Example Beach Resort & Spa",
+    "aliases": [
+      "Example Beach Resort and Spa",
+      "Example Beach Resort"
+    ],
+    "country": "EG",
+    "people": 2,
+    "max_price_per_person": "2000",
+    "min_nights": 7,
+    "airports": ["LCJ", "WAW", "WMI", "KTW", "WRO"],
+    "provider_listings": {
+      "wakacje.pl": "https://www.wakacje.pl/wczasy/przyklad-nazwa-hotelu-h00000/"
+    },
+    "provider_destinations": {
+      "tui": "HRG",
+      "itaka": "egipt"
+    }
+  }
+]

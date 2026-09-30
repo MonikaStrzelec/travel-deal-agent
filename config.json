@@ -149,7 +149,7 @@
     }
   },
   "external_verification": {
-    "enabled": false,
+    "enabled": true,
     "max_candidates": 5,
     "sources": {
       "google": {
@@ -160,17 +160,19 @@
         },
         "min_confidence": 0.9,
         "rating_weight": 2,
-        "reviews_weight": 0.5
+        "reviews_weight": 0.5,
+        "cache_ttl_hours": 24
       },
       "tripadvisor": {
-        "enabled": true,
+        "enabled": false,
         "scale": {
           "min": 1,
           "max": 5
         },
         "min_confidence": 0.9,
         "rating_weight": 2,
-        "reviews_weight": 0.5
+        "reviews_weight": 0.5,
+        "cache_ttl_hours": 24
       }
     },
     "scale": {
@@ -244,6 +246,7 @@
       "timeout_seconds": 20,
       "max_detail_requests": 1,
       "max_pages": 3,
+      "watchlist_max_pages": 2,
       "cycle_seconds": 90
     },
     "wakacje.pl": {

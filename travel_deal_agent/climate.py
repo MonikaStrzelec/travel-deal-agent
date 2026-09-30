@@ -41,6 +41,7 @@ CLIMATE_DAYTIME_MAX_C: dict[str, tuple[int, ...]] = {
     "greece_zakynthos": (14, 15, 17, 20, 25, 30, 32, 33, 28, 24, 19, 16),
     "greece_corfu": (14, 14, 17, 20, 25, 29, 32, 33, 28, 24, 19, 15),
     "greece_evia": (13, 14, 17, 20, 26, 30, 32, 32, 28, 24, 19, 14),
+    "greece_chalkidiki": (10, 11, 15, 19, 25, 30, 32, 32, 27, 22, 16, 11),
     "bulgaria_black_sea_coast": (7, 9, 12, 16, 22, 27, 29, 29, 25, 19, 14, 8),
     "cyprus_east_coast": (17, 18, 20, 23, 27, 31, 33, 33, 31, 28, 23, 19),
     "malta": (16, 16, 17, 20, 24, 29, 32, 32, 29, 25, 21, 17),
@@ -54,6 +55,15 @@ CLIMATE_DAYTIME_MAX_C: dict[str, tuple[int, ...]] = {
     "cape_verde_sal": (25, 25, 25, 26, 26, 27, 28, 30, 30, 30, 28, 26),
     "croatia_adriatic_coast": (10, 10, 14, 18, 23, 27, 30, 30, 24, 19, 14, 11),
     "morocco_agadir": (21, 22, 23, 23, 24, 25, 26, 27, 26, 26, 24, 22),
+    "spain_mallorca": (16, 16, 18, 20, 24, 29, 31, 32, 28, 24, 19, 17),
+    "montenegro_coast": (13, 14, 16, 19, 24, 28, 30, 30, 27, 23, 19, 14),
+    "egypt_sharm_el_sheikh": (22, 24, 27, 30, 35, 37, 38, 38, 36, 32, 28, 24),
+    "morocco_marrakesh": (19, 21, 24, 26, 30, 34, 38, 37, 32, 28, 23, 20),
+    "portugal_madeira": (20, 20, 20, 21, 22, 24, 26, 27, 27, 25, 23, 21),
+    "croatia_central_dalmatia": (11, 12, 15, 19, 24, 28, 31, 31, 26, 21, 17, 12),
+    "oman_salalah": (28, 28, 30, 32, 33, 32, 28, 27, 29, 31, 31, 29),
+    "spain_costa_brava": (14, 15, 18, 20, 24, 28, 31, 31, 27, 23, 17, 14),
+    "tanzania_zanzibar": (33, 33, 33, 31, 30, 29, 29, 30, 30, 31, 31, 32),
 }
 
 
@@ -69,7 +79,7 @@ class ClimateSource(TypedDict):
 
 # Not a runtime dependency of `typical_daytime_temperature`; kept purely so a
 # future maintainer can see where each row came from and how confident to be
-# in it. All 23 rows were researched from public climate-normal aggregators
+# in it. The rows were researched from public climate-normal aggregators
 # (primarily climatestotravel.com, an aggregator -- not a national met
 # service or NOAA/WMO) and cross-checked for internal consistency (e.g.
 # Hurghada vs. Marsa Alam, Antalya vs. Izmir, Canary Islands vs. mainland
@@ -137,6 +147,22 @@ CLIMATE_SOURCES: dict[str, ClimateSource] = {
         ),
         reference_period="1991-2020 (stated by source; reanalysis/gridded, not a ground station)",
         notes="Only region of the 23 with no data at all from the primary source.",
+    ),
+    "greece_chalkidiki": ClimateSource(
+        reference_location="Thessaloniki",
+        source=(
+            "Climates to Travel (Thessaloniki table on "
+            "climatestotravel.com/climate/greece), cross-checked against the "
+            "WMO 1991-2020 normals for Thessaloniki Airport (Mikra) and the "
+            "Aristotle University of Thessaloniki station"
+        ),
+        reference_period="1991-2020",
+        notes=(
+            "Added after Climate V0 for Wakacje.pl 'Chalkidiki / ...' offers. "
+            "Thessaloniki (mainland, ~50-80km from the Kassandra/Sithonia "
+            "resorts) is used as a proxy; no on-peninsula station was used. "
+            "Every month is within 1C of both WMO station series."
+        ),
     ),
     "bulgaria_black_sea_coast": ClimateSource(
         reference_location="Burgas",
@@ -216,6 +242,97 @@ CLIMATE_SOURCES: dict[str, ClimateSource] = {
         reference_period="1981-2010",
         notes="Shorter/older window than the ~30-year normal used for most other rows.",
     ),
+    "spain_mallorca": ClimateSource(
+        reference_location="Palma de Mallorca",
+        source="Climates to Travel (climatestotravel.com/climate/spain/majorca)",
+        reference_period="1991-2020",
+        notes=(
+            "Added for Wakacje.pl 'Majorka / ...' and mock 'Mallorca' offers. "
+            "Verified against the source; the row initially added for these "
+            "destinations was a pre-verification estimate and has been "
+            "corrected to match (largest change: +1C in June, Aug, Oct/Nov)."
+        ),
+    ),
+    "montenegro_coast": ClimateSource(
+        reference_location="Budva",
+        source="Climates to Travel (climatestotravel.com/climate/montenegro/budva)",
+        reference_period="1991-2020",
+        notes=(
+            "Added for Wakacje.pl 'Czarnogóra / Riwiera Czarnogórska / ...' "
+            "offers. Coastal proxy only -- inland Podgorica and the mountains "
+            "are much hotter/colder respectively. Verified against the "
+            "source; the row initially added for this destination was a "
+            "pre-verification estimate and has been corrected to match "
+            "(largest change: +1C in May, June, Sept, Oct, Nov)."
+        ),
+    ),
+    "egypt_sharm_el_sheikh": ClimateSource(
+        reference_location="Sharm El Sheikh",
+        source="Climates to Travel (climatestotravel.com/climate/egypt/sharm-el-sheikh)",
+        reference_period="1997-2020",
+        notes=(
+            "Kept as its own region rather than folded into egypt_hurghada: "
+            "consistently 1-2C warmer May-August despite both being Red Sea "
+            "coast."
+        ),
+    ),
+    "morocco_marrakesh": ClimateSource(
+        reference_location="Marrakesh",
+        source="Climates to Travel (climatestotravel.com/climate/morocco/marrakesh)",
+        reference_period="1991-2020",
+        notes=(
+            "Inland, not coastal -- meaningfully hotter summers and wider "
+            "day/night swings than morocco_agadir (Atlantic coast); must not "
+            "share that row."
+        ),
+    ),
+    "portugal_madeira": ClimateSource(
+        reference_location="Funchal",
+        source="Climates to Travel (climatestotravel.com/climate/madeira)",
+        reference_period="1991-2020",
+        notes="Mild, narrow-range subtropical-oceanic climate, unlike mainland Portugal.",
+    ),
+    "croatia_central_dalmatia": ClimateSource(
+        reference_location="Sibenik",
+        source="Climates to Travel (climatestotravel.com/climate/croatia/sibenik)",
+        reference_period="1996-2020",
+        notes=(
+            "Added for Wakacje.pl/TUI 'Dalmacja Polnocna / Vodice' offers. "
+            "Kept separate from croatia_adriatic_coast (Rijeka/Kvarner Gulf, "
+            "further north): Sibenik runs up to 3C warmer in shoulder months "
+            "(e.g. November)."
+        ),
+    ),
+    "oman_salalah": ClimateSource(
+        reference_location="Salalah",
+        source="Climates to Travel (climatestotravel.com/climate/oman/salalah)",
+        reference_period="1991-2020",
+        notes="Monsoon-influenced -- summer (Jun-Sep) is notably cooler than spring, unlike most rows.",
+    ),
+    "spain_costa_brava": ClimateSource(
+        reference_location="Girona",
+        source="Climates to Travel (climatestotravel.com/climate/spain/girona)",
+        reference_period="1991-2020",
+        notes=(
+            "Girona (~25km inland) used as a proxy: the primary source has no "
+            "dedicated Costa Brava coastal-town page, and the source itself "
+            "notes Girona is 'a little more continental than the coast' -- "
+            "winter lows on the coast are likely a touch milder than this row. "
+            "Same proxy pattern as croatia_adriatic_coast (Rijeka for Krk) and "
+            "greece_chalkidiki (Thessaloniki for the peninsula)."
+        ),
+    ),
+    "tanzania_zanzibar": ClimateSource(
+        reference_location="Zanzibar",
+        source="Climates to Travel (climatestotravel.com/climate/zanzibar)",
+        reference_period="1991-2020",
+        notes=(
+            "Destination-alias only ('zanzibar' in the text) -- deliberately "
+            "no TZ country fallback, since Tanzania mainland safari/highland "
+            "destinations are climatically unrelated and country='TZ' alone "
+            "does not distinguish them."
+        ),
+    ),
 }
 
 # Only for countries where every touristic destination this project has ever
@@ -224,12 +341,17 @@ CLIMATE_SOURCES: dict[str, ClimateSource] = {
 # ES, TN, HR, MA and CV: each spans (or, for HR/MA/CV, has too little
 # observed data to rule out) more than one meaningfully different climate
 # under the same ISO code -- a single number there would be false precision,
-# not a helpful default.
+# not a helpful default. Also deliberately excludes TZ (Zanzibar's tropical
+# coast vs. mainland safari/highland destinations under the same code -- see
+# tanzania_zanzibar in CLIMATE_SOURCES) and OM (Salalah's monsoon-influenced
+# south vs. Muscat's desert climate).
 SAFE_COUNTRY_FALLBACK: dict[str, str] = {
     "MT": "malta",
     "AL": "albania_riviera",
     "CY": "cyprus_east_coast",
     "BG": "bulgaria_black_sea_coast",
+    # Package tours to Montenegro only serve the narrow Adriatic coastal strip.
+    "ME": "montenegro_coast",
 }
 
 # Explicit alias keywords per canonical region, matched as whole words/phrases
@@ -265,12 +387,21 @@ REGION_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "turkey_aegean_coast": (
         "wybrzeże egejskie",
+        "bodrum",
         "didim",
         "kusadasi",
         "ozdere",
         "turgutreis",
     ),
     "egypt_hurghada": ("hurghada", "makadi bay", "soma bay"),
+    "egypt_sharm_el_sheikh": (
+        "sharm el sheikh",
+        "sharm el szejk",
+        "szarm el szejk",
+        "naama bay",
+        "ras um sid",
+        "nabq bay",
+    ),
     "egypt_marsa_alam": (
         "marsa el alam",
         "marsa alam",
@@ -278,12 +409,15 @@ REGION_ALIASES: dict[str, tuple[str, ...]] = {
         "madinat coraya",
         "port ghalib",
     ),
-    "greece_crete": ("kreta",),
-    "greece_rhodes": ("rodos",),
+    # Polish provider spellings plus the English names (e.g. "Crete") used by
+    # the mock provider and some listings.
+    "greece_crete": ("kreta", "crete"),
+    "greece_rhodes": ("rodos", "rhodes"),
     "greece_kos": ("kos",),
     "greece_zakynthos": ("zakynthos",),
-    "greece_corfu": ("korfu",),
+    "greece_corfu": ("korfu", "corfu"),
     "greece_evia": ("evia",),
+    "greece_chalkidiki": ("chalkidiki", "chalkidyki", "halkidiki"),
     "bulgaria_black_sea_coast": (
         "słoneczny brzeg",
         "riwiera bułgarska",
@@ -298,10 +432,56 @@ REGION_ALIASES: dict[str, tuple[str, ...]] = {
     "spain_costa_dorada": ("costa dorada", "salou"),
     "spain_costa_del_sol": ("costa del sol", "benalmadena"),
     "spain_costa_blanca": ("costa blanca", "benidorm"),
-    "spain_canary_islands": ("wyspy kanaryjskie", "fuerteventura"),
+    "spain_costa_brava": ("costa brava", "lloret de mar", "calella", "tossa de mar"),
+    "spain_canary_islands": (
+        "wyspy kanaryjskie",
+        "fuerteventura",
+        "gran canaria",
+        "teneryfa",
+        "tenerife",
+        "lanzarote",
+        "la palma",
+    ),
+    "spain_mallorca": (
+        "majorka",
+        "mallorca",
+        "alcudia",
+        "alcúdia",
+        "cala millor",
+        "cala d or",
+        "can picafort",
+        "magaluf",
+        "santa ponsa",
+        "playa de muro",
+        "cala ratjada",
+    ),
     "cape_verde_sal": ("wyspy zielonego przylądka", "sal"),
     "croatia_adriatic_coast": ("krk", "njivice"),
+    # Sibenik/Vodice (Northern Dalmatia per Polish provider labelling) is
+    # geographically distinct from the Kvarner Gulf (krk/njivice above),
+    # despite the shared "adriatic coast" umbrella term.
+    "croatia_central_dalmatia": ("vodice", "sibenik", "šibenik"),
     "morocco_agadir": ("agadir",),
+    "morocco_marrakesh": ("marrakesz", "marrakech", "marrakesh"),
+    "portugal_madeira": ("madera", "madeira", "funchal", "machico", "canico", "caniço"),
+    "oman_salalah": ("salalah",),
+    "tanzania_zanzibar": ("zanzibar",),
+    # Country-name aliases are safe here only because ME has a safe fallback.
+    "montenegro_coast": (
+        "czarnogóra",
+        "czarnogora",
+        "riwiera czarnogórska",
+        "montenegro",
+        "budva",
+        "becici",
+        "bečići",
+        "petrovac",
+        "sutomore",
+        "ulcinj",
+        "herceg novi",
+        "sveti stefan",
+        "kotor",
+    ),
 }
 
 _PUNCTUATION_RE = re.compile(r"[^\w\s]", re.UNICODE)

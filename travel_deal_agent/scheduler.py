@@ -61,6 +61,7 @@ class Scheduler:
         started = time.monotonic()
         logger.info("Search started")
         accepted = []
+        watchlist_offer_ids: set[tuple[str, str]] = set()
         if force or self._within_active_hours():
             for name, config in self.settings.providers.items():
                 if not config["enabled"]:
@@ -73,9 +74,61 @@ class Scheduler:
                     matches = self.pipeline.filter_batch(name, offers)
                     accepted.extend(matches)
                     logger.info("Provider %s matched %s offers", name, len(matches))
+                    # A watchlist failure (bad config, matching bug) is logged and
+                    # skipped; it must never stop the standard search above or the
+                    # results already collected from other providers this cycle.
+                    try:
+                        watchlist_matches = self.pipeline.filter_watchlist_batch(
+                            name, offers, matches
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Watchlist matching failed for provider %s; standard search unaffected",
+                            name,
+                        )
+                        watchlist_matches = []
+                    if watchlist_matches:
+                        logger.info(
+                            "Provider %s matched %s watchlist offers",
+                            name,
+                            len(watchlist_matches),
+                        )
+                    watchlist_offer_ids.update((o.provider, o.offer_id) for o in watchlist_matches)
+                    accepted.extend(watchlist_matches)
+                    # A targeted, per-hotel fetch (e.g. Wakacje.pl's dedicated
+                    # hotel listing, see wakacje.py) -- only for a provider
+                    # that implements `fetch_watchlist_offers`; piggybacks on
+                    # this same due cycle instead of its own schedule. Same
+                    # isolation as the opportunistic match above: a failure
+                    # here is logged and skipped, never lets a bad watchlist
+                    # entry or a targeted-fetch bug stop the standard search.
+                    fetch_targeted = getattr(self.providers[name], "fetch_watchlist_offers", None)
+                    if fetch_targeted is not None and self.settings.hotel_watchlist:
+                        try:
+                            targeted_offers = fetch_targeted(self.settings.hotel_watchlist)
+                            targeted_matches = self.pipeline.filter_watchlist_batch(
+                                name, targeted_offers, matches + watchlist_matches
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Targeted watchlist fetch failed for provider %s; "
+                                "standard search unaffected",
+                                name,
+                            )
+                            targeted_matches = []
+                        if targeted_matches:
+                            logger.info(
+                                "Provider %s matched %s targeted watchlist offers",
+                                name,
+                                len(targeted_matches),
+                            )
+                        watchlist_offer_ids.update(
+                            (o.provider, o.offer_id) for o in targeted_matches
+                        )
+                        accepted.extend(targeted_matches)
         else:
             logger.info("Outside active hours; skipping provider scans")
-        result = self.pipeline.finalize(accepted)
+        result = self.pipeline.finalize(accepted, frozenset(watchlist_offer_ids))
         deliver_pending(self.store, self.notifier)
         logger.info(
             "Search finished in %.3fs; %s unique matches", time.monotonic() - started, len(result)
@@ -118,22 +171,39 @@ class Scheduler:
         return float(minimum) if minimum == maximum else self.random_range(minimum, maximum)
 
     def run_forever(self) -> None:
-        """Poll continuously until interrupted; due times survive restarts."""
+        """Poll continuously until interrupted; due times survive restarts.
+
+        A cycle that fails outside the isolated providers (e.g. SQLite locked or a
+        full disk) is logged and retried after a capped exponential backoff, so a
+        persistent fault does not end the process and trigger a fast container
+        restart loop. KeyboardInterrupt and SystemExit are not Exceptions and still
+        propagate.
+        """
+        failed_cycles = 0
         while True:
-            self.run_once()
-            idle = self.settings.scheduler["idle_poll_seconds"]
-            if self._within_active_hours():
-                due = []
-                for name, config in self.settings.providers.items():
-                    state = self.store.run_state(name)
-                    if config["enabled"] and state is not None:
-                        due.append(state["next_run"])
-                wait = min(idle, min(due) - self.clock()) if due else idle
-            else:
-                # Providers were never fetched this cycle, so their due times
-                # are frozen (not necessarily in the future); a plain idle
-                # poll avoids both a busy loop and any dependency on those
-                # stale due times. The next active-hours entry is picked up
-                # by the run_once() gate above, at worst one idle interval late.
-                wait = idle
+            try:
+                self.run_once()
+                wait = self._wait_until_next_cycle()
+                failed_cycles = 0
+            except Exception:
+                failed_cycles += 1
+                exponent = min(failed_cycles - 1, self.settings.scheduler["max_backoff_exponent"])
+                wait = self.settings.scheduler["idle_poll_seconds"] * 2**exponent
+                logger.exception(
+                    "Polling cycle failed (%s in a row); retrying in %ss", failed_cycles, wait
+                )
             self.sleep(max(1, wait))
+
+    def _wait_until_next_cycle(self) -> float:
+        idle = self.settings.scheduler["idle_poll_seconds"]
+        if not self._within_active_hours():
+            # Due times are frozen outside active hours and may be stale, so a plain
+            # idle poll avoids a busy loop; the next window is picked up at worst one
+            # idle interval late.
+            return idle
+        due = [
+            state["next_run"]
+            for name, config in self.settings.providers.items()
+            if config["enabled"] and (state := self.store.run_state(name)) is not None
+        ]
+        return min(idle, min(due) - self.clock()) if due else idle

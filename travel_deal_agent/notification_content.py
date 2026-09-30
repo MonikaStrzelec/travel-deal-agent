@@ -1,7 +1,6 @@
 """Channel-independent alert content built from immutable outbox snapshots.
 
-Rendered as compact, Polish-language Telegram-style text (the project owner is
-the sole recipient). HTML is used only for the offer link (`parse_mode: "HTML"`,
+Rendered as compact, Polish-language Telegram-style text. HTML is used only for the offer link (`parse_mode: "HTML"`,
 set in `notifications.UrllibTelegramTransport`) -- every piece of free text is
 escaped with `html.escape` first, so a hotel name or destination containing
 `&`/`<`/`>` can never break the message or the link markup.
@@ -206,20 +205,25 @@ def _compact_destination(destination: str | None) -> str | None:
 
 EXTERNAL_SOURCE_LABELS = {"google": "Google", "tripadvisor": "TripAdvisor"}
 
+# Matches the branding already used in README.md's provider table.
+PROVIDER_LABELS_PL = {
+    "wakacje.pl": "Wakacje.pl",
+    "itaka": "ITAKA",
+    "rainbow": "Rainbow",
+    "tui": "TUI",
+}
 
-def _verified_external_rating(offer: Offer, source: str) -> tuple[float, float] | None:
-    """(rating, scale_max) only when a source has actually confirmed it."""
+
+def _pl_count(value: int) -> str:
+    """A thousands-grouped count using a plain space, e.g. `26 384`."""
+    return f"{value:,}".replace(",", " ")
+
+
+def _verified_external_rating(offer: Offer, source: str) -> tuple[float, float, int | None] | None:
+    """(rating, scale_max, number_of_reviews) only when a source has actually confirmed it."""
     verified = offer.hotel_ratings.get(source)
     if verified is not None and offer.external_verification_statuses.get(source) == "verified":
-        return verified.rating, verified.scale_max
-    if (
-        source == "google"
-        and offer.google_rating is not None
-        and offer.external_rating_status == "verified"
-    ):
-        rating = offer.google_rating.get("rating")
-        if rating is not None and offer.google_rating_max is not None:
-            return rating, offer.google_rating_max
+        return verified.rating, verified.scale_max, verified.number_of_reviews
     return None
 
 
@@ -254,15 +258,25 @@ class NotificationMessage:
         The HOT/GOOD/MATCH category is classified fresh from the snapshot, never
         stored. `final_score` is deliberately not shown. An incomplete price only
         gets a disclaimer: `filtering.matches()` already decided it may alert.
+
+        A watched-hotel alert (see `pipeline.OfferPipeline.finalize`/
+        `Store.observe`'s `kind_prefix`) never gets a HOT/GOOD/MATCH
+        attractiveness category -- it was matched on its own
+        watchlist criteria, not the generic quality rules `attractiveness.py`
+        classifies every other offer by.
         """
         offer = self.offer
+        is_watchlist = self.kind.startswith("watchlist_")
+        kind = self.kind.removeprefix("watchlist_")
         ratings = provider_ratings if provider_ratings is not None else {}
-        category = classify_offer(offer, ratings, attractiveness_config).category
+        category = (
+            None if is_watchlist else classify_offer(offer, ratings, attractiveness_config).category
+        )
         body = [
-            _header_line(self.kind, category),
+            _header_line(kind, category),
             _hotel_line(offer),
             _rating_and_board_line(offer),
-            *_price_lines(offer, self.kind, self.previous_price),
+            *_price_lines(offer, kind, self.previous_price),
             _departure_line(offer),
             _dates_line(offer),
             _climate_line(offer),
@@ -284,9 +298,13 @@ def _nights(offer: Offer) -> int | None:
     return (offer.return_date - offer.departure_date).days
 
 
-def _header_line(kind: str, category: Attractiveness) -> str:
-    attractiveness_emoji, category_label = ATTRACTIVENESS_LABELS_PL[category]
+def _header_line(kind: str, category: Attractiveness | None) -> str:
     event_emoji, event_label = EVENT_LABELS_PL.get(kind, (None, kind))
+    if category is None:
+        # Watched-hotel alert: no HOT/GOOD/MATCH tiering, just the plain
+        # qualification fact (its own price ceiling was met) -- see `render`.
+        return f"{event_emoji or '👀'} {event_label} • Obserwowany hotel"
+    attractiveness_emoji, category_label = ATTRACTIVENESS_LABELS_PL[category]
     return f"{event_emoji or attractiveness_emoji} {event_label} • {category_label}"
 
 
@@ -311,16 +329,24 @@ def _pl_rating(value: float) -> str:
 def _rating_and_board_line(offer: Offer) -> str | None:
     rating_part = None
     if offer.rating is not None:
-        rating_part = f"⭐ {_pl_rating(offer.rating)}"
+        provider_label = PROVIDER_LABELS_PL.get(offer.provider, offer.provider)
+        native_segment = f"{provider_label}: {_pl_rating(offer.rating)}"
         if offer.provider_rating_max is not None:
-            rating_part += f"/{_pl_number(offer.provider_rating_max)}"
+            native_segment += f"/{_pl_number(offer.provider_rating_max)}"
+        if offer.number_of_reviews is not None:
+            native_segment += f" ({_pl_count(offer.number_of_reviews)} opinii)"
+        segments = [native_segment]
         for source in dict.fromkeys(["google", "tripadvisor", *offer.hotel_ratings]):
             verified = _verified_external_rating(offer, source)
             if verified is None:
                 continue
-            external_rating, external_max = verified
+            external_rating, external_max, review_count = verified
             label = EXTERNAL_SOURCE_LABELS.get(source, source.capitalize())
-            rating_part += f" ({label}: {_pl_rating(external_rating)}/{_pl_number(external_max)})"
+            external_segment = f"{label}: {_pl_rating(external_rating)}/{_pl_number(external_max)}"
+            if review_count is not None:
+                external_segment += f" ({_pl_count(review_count)} opinii)"
+            segments.append(external_segment)
+        rating_part = "⭐ " + " | ".join(segments)
     board_part = None
     if offer.board_type:
         board_label = BOARD_LABELS_PL.get(offer.board_type, offer.board_type)

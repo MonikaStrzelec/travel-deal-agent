@@ -9,18 +9,6 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from typing_extensions import TypedDict
-
-
-class GoogleRatingData(TypedDict, total=False):
-    """Serializable external result; absent fields represent unavailable data."""
-
-    rating: float
-    number_of_reviews: int | None
-    matched_hotel_name: str
-    location: str | None
-    place_id: str | None
-
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -129,11 +117,8 @@ class Offer:
     last_seen: datetime = field(default_factory=utc_now)
     hotel_ratings: dict[str, ExternalHotelRating] = field(default_factory=dict)
     external_verification_statuses: dict[str, str] = field(default_factory=dict)
-    external_rating_status: str = "external rating not verified"
-    google_rating: GoogleRatingData | None = None
     final_score: float | None = None
     provider_rating_max: float | None = None
-    google_rating_max: float | None = None
     price_is_complete: bool = True
     price_notes: str | None = None
     variant_identity: str | None = None
@@ -178,9 +163,10 @@ class Offer:
             not math.isfinite(self.final_score) or self.final_score < 0
         ):
             raise ValueError("Invalid final score")
-        for maximum in (self.provider_rating_max, self.google_rating_max):
-            if maximum is not None and (not math.isfinite(maximum) or maximum <= 0):
-                raise ValueError("Invalid rating scale maximum")
+        if self.provider_rating_max is not None and (
+            not math.isfinite(self.provider_rating_max) or self.provider_rating_max <= 0
+        ):
+            raise ValueError("Invalid rating scale maximum")
         for key, maximum in (("hotel_stars", 5),):
             value = getattr(self, key)
             if value is not None and not 0 <= value <= maximum:

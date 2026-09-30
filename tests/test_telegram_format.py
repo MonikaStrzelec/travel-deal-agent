@@ -199,7 +199,7 @@ def test_full_compact_format_matches_the_agreed_layout(
 
     assert lines[0] == "✓ NOWA • Spełnia kryteria"
     assert lines[1] == "🏨 Meridian ★★★★ • Bułgaria • Słoneczny Brzeg"
-    assert lines[2] == "⭐ 8,0/10 🍽 Śniadania i obiadokolacje (HB)"
+    assert lines[2] == "⭐ Wakacje.pl: 8,0/10 (150 opinii) 🍽 Śniadania i obiadokolacje (HB)"
     assert lines[3] == "💰 1393 zł/os. (2786 zł / 2 osoby) • 199 zł/os./noc"
     assert lines[4] == "🛫 Warszawa • 8 dni / 7 nocy"
     assert lines[5] == "📅 18.05 (wtorek) – 25.05.2027 (wtorek)"
@@ -261,13 +261,34 @@ def test_climate_line_shown_for_a_recognized_region(
     assert lines[date_index + 2] == ""
 
 
+def test_climate_line_shown_for_a_greek_wakacje_region(
+    offer: Offer, store: Store, settings: Settings
+) -> None:
+    # Regression: Wakacje.pl's "Chalkidiki / <town>" offers used to get no
+    # climate line because the region had no alias.
+    candidate = replace(
+        offer,
+        provider="wakacje.pl",
+        country="GR",
+        destination="Chalkidiki / Pefkochori",
+        departure_date=date(2026, 10, 8),
+        return_date=date(2026, 10, 15),
+    )
+    store.observe(candidate, True)
+
+    message = _render(store, settings)
+
+    assert "☀️ Typowo w październiku: ok. 22°C" in message
+
+
 def test_climate_line_omitted_for_an_unrecognized_destination(
     offer: Offer, store: Store, settings: Settings
 ) -> None:
-    # The default fixture offer (GR / "Crete", in English) matches no alias,
-    # and GR has no safe country fallback -- the line must simply not appear,
-    # never a placeholder like "brak danych" or "n/a".
-    store.observe(offer, True)
+    # An unmapped Greek destination matches no alias, and GR has no safe
+    # country fallback -- the line must simply not appear, never a
+    # placeholder like "brak danych" or "n/a".
+    candidate = replace(offer, country="GR", destination="Unmapped Greek Village")
+    store.observe(candidate, True)
 
     message = _render(store, settings)
 

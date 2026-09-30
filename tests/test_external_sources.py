@@ -70,8 +70,8 @@ def test_two_sources_persist_and_render(
     assert stored.hotel_ratings == result.hotel_ratings == message.offer.hotel_ratings
     assert stored.hotel_ratings["google"].external_id == "fixture-id"
     assert "Google: 4.4/5 | Tripadvisor: 4.5/5" in format_ratings(result, settings.ranking)
-    assert "(Google: 4,4/5)" in message.render()
-    assert "(TripAdvisor: 4,5/5)" in message.render()
+    assert "Google: 4,4/5 (123 opinii)" in message.render()
+    assert "TripAdvisor: 4,5/5 (123 opinii)" in message.render()
     assert score(result, settings.ranking, "1500") > score(offer, settings.ranking, "1500")
 
 
@@ -176,8 +176,9 @@ def test_order_deduplication_and_candidate_budget(
         assert all(not o.hotel_ratings for o in adapter.calls)
 
 
-def test_placeholder_providers_are_offline(offer: Offer) -> None:
-    assert GoogleRatingProvider().verify(offer) is None
+def test_tripadvisor_placeholder_is_offline(offer: Offer) -> None:
+    # Tripadvisor stays a stub/disabled by design; see test_google_places.py
+    # for GoogleRatingProvider's own (real, cached, offline-safe) behavior.
     assert TripadvisorRatingProvider().verify(offer) is None
 
 

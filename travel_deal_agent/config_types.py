@@ -71,6 +71,7 @@ class ProviderConfig(TypedDict):
     interval_min_seconds: NotRequired[int]
     interval_max_seconds: NotRequired[int]
     max_pages: NotRequired[int | None]
+    watchlist_max_pages: NotRequired[int]
     max_requests: NotRequired[int]
     max_detail_requests: NotRequired[int]
     timeout_seconds: NotRequired[int]
@@ -88,6 +89,7 @@ class ExternalSourceConfig(TypedDict):
     min_confidence: float
     rating_weight: float
     reviews_weight: float
+    cache_ttl_hours: int
 
 
 class ExternalConfig(TypedDict):
@@ -137,6 +139,55 @@ class AttractivenessConfig(TypedDict):
     hotel_quality: HotelQualityThresholds
     airport: AirportTiers
     board: BoardTiers
+
+
+@with_config(ConfigDict(extra="forbid"))
+class HotelWatchlistEntry(TypedDict):
+    """One independently searched hotel, entirely separate from `FilterConfig`.
+
+    A watched hotel is a specific property chosen explicitly,
+    not one discovered via the generic quality rules in `filters` -- so it
+    has its own price ceiling, stay-length and airport rules, and is never
+    subject to `filters["max_price"]` or the board/rating/star rules.
+
+    Configured in its own file, `hotel_watchlist.json` (see
+    `config.load_hotel_watchlist`), never in `config.json` -- swapping,
+    adding or removing a watched hotel is a `hotel_watchlist.json` edit only,
+    never a code change (`@with_config(extra="forbid")` here catches a typo'd
+    field the same way `AppConfig` does for `config.json`).
+
+    `aliases` lists reasonable spelling variants a provider might return; `name`
+    itself is always also accepted as an alias (see `watchlist.py`), so listing
+    it again in `aliases` is optional. `country` (ISO alpha-2), when set, is an
+    extra safeguard against matching a different hotel that happens to share a
+    similar name in a different country; an offer with no country data is
+    never rejected because of it (fails open, like elsewhere in this project).
+
+    `provider_listings`, when set, maps a provider name (e.g. `"wakacje.pl"`)
+    to that provider's own already-resolved, dedicated listing URL for this
+    exact hotel -- e.g. found once by manually searching the hotel's name on
+    that provider's own site and following the redirect to its hotel page.
+    This project never derives or guesses that URL itself: a provider's own
+    hotel-name -> hotel-ID resolution is typically an autocomplete/AJAX
+    endpoint, commonly disallowed by that site's own robots.txt (see
+    `providers/wakacje.py`'s "Hotel watchlist" docstring section for the
+    concrete reasoning). Only `wakacje.pl` is read from this mapping today;
+    a provider absent from it simply gets no *URL-based* targeted fetch from
+    here -- ITAKA and TUI instead reach a watched hotel their own way,
+    without a `provider_listings` URL (see `itaka.py`'s widened
+    `_detail_shortlist` and `tui.py`'s `fetch_watchlist_offers`).
+    """
+
+    name: str
+    aliases: list[str]
+    country: NotRequired[str | None]
+    people: int
+    max_price_per_person: str
+    min_nights: NotRequired[int | None]
+    max_nights: NotRequired[int | None]
+    airports: list[str]
+    provider_listings: NotRequired[dict[str, str]]
+    provider_destinations: NotRequired[dict[str, str]]
 
 
 class SchedulerConfig(TypedDict):
