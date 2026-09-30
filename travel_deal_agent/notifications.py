@@ -45,7 +45,26 @@ LogNotifier = ConsoleNotifier
 
 
 class TelegramDeliveryError(Exception):
-    """A Telegram delivery failure; the message never includes the bot token."""
+    """A Telegram delivery failure; the message never includes the bot token.
+
+    `retry_after` is the wait (seconds) Telegram requested with an HTTP 429.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(payload: str) -> float | None:
+    """Read `parameters.retry_after` from a Telegram error body, if well-formed."""
+    try:
+        parsed = json.loads(payload)
+        value = parsed["parameters"]["retry_after"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        return None
+    return float(value)
 
 
 class TelegramTransport(Protocol):
@@ -82,7 +101,8 @@ class UrllibTelegramTransport:
         except HTTPError as exc:
             payload = exc.read().decode("utf-8", errors="replace")
             raise TelegramDeliveryError(
-                f"Telegram API returned HTTP {exc.code}: {payload}"
+                f"Telegram API returned HTTP {exc.code}: {payload}",
+                retry_after=_retry_after_seconds(payload) if exc.code == 429 else None,
             ) from None
         except URLError as exc:
             raise TelegramDeliveryError(f"Telegram request failed: {exc.reason}") from None
@@ -125,11 +145,23 @@ class TelegramNotifier(Notifier):
 
 
 def deliver_pending(store: Store, notifier: Notifier) -> None:
+    """Attempt every due outbox entry once; delivery is at-least-once.
+
+    A crash between a successful send and `mark_delivered` re-sends that
+    notification on the next cycle: Telegram offers no transaction shared with
+    SQLite, so exactly-once delivery is not attempted.
+    """
     for notification in store.pending():
         try:
             notifier.send(notification)
-        except Exception:
+        except Exception as exc:
+            retry_after = exc.retry_after if isinstance(exc, TelegramDeliveryError) else None
             logger.exception("Notification %s failed; will retry later", notification["id"])
-            store.mark_retry(notification["id"])
+            store.mark_retry(notification["id"], min_delay_seconds=retry_after)
+            if retry_after is not None:
+                # Rate limited: the rest of the batch would be refused too, so leave it
+                # pending for the next cycle instead of burning its retry budget.
+                logger.warning("Telegram rate limit; pausing delivery for %ss", retry_after)
+                break
         else:
             store.mark_delivered(notification["id"])
