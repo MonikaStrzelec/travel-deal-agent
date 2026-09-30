@@ -2,12 +2,20 @@ services:
   travel-deal-agent:
     build: .
     restart: unless-stopped
+    environment:
+      # Container clock stays UTC; only log timestamps and this display name
+      # change. Business logic already reads active_hours.timezone from
+      # config.json (see active_hours.py), so this is cosmetic, not load-bearing.
+      - TZ=Europe/Warsaw
     env_file:
       - .env
     volumes:
       # SQLite database and rotating logs survive container restarts/recreates.
       - ./data:/app/data
       - ./logs:/app/logs
-      # Edit config.json on the host and restart the container to apply it;
-      # read-only so the running process can never write back to it.
+      # Edit config.json/hotel_watchlist.json on the host and restart the
+      # container to apply changes; read-only so the running process can
+      # never write back to them. hotel_watchlist.json is optional -- its
+      # absence just means no watched hotel (see config.load_hotel_watchlist).
       - ./config.json:/app/config.json:ro
+      - ./hotel_watchlist.json:/app/hotel_watchlist.json:ro

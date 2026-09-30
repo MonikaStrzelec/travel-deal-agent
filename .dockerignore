@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Personal watched-hotel data; never baked into the image (bind-mounted instead).
+hotel_watchlist.json
+
 # Persistent/generated data -- must come from the volume, never the image
 data/
 logs/

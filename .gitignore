@@ -12,3 +12,9 @@ logs/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Personal watched-hotel data (destination, budget); same treatment as .env.
+hotel_watchlist.json
+
+# Local assistant/IDE data
+.claude/
