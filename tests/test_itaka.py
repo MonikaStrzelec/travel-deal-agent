@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 import pytest
 
 from travel_deal_agent.config import Settings
+from travel_deal_agent.config_types import HotelWatchlistEntry
 from travel_deal_agent.filtering import matches
 from travel_deal_agent.models import Offer
 from travel_deal_agent.providers.http import Response
@@ -511,3 +512,175 @@ def test_hotel_review_update_preserves_identity(raw: dict[str, object]) -> None:
     changed = json.loads(json.dumps(raw))
     changed["segments"][1]["content"]["reviews"]["reviewsNumber"] = 124
     assert normalize_rate(changed, []).offer_id == original.offer_id
+
+
+# --- Hotel watchlist: widens the detail-confirmation shortlist by identity ----
+#
+# ITAKA has no confirmed dedicated per-hotel listing URL (unlike wakacje.pl),
+# so a watched hotel priced above `filters["max_price"]` can only ever be
+# confirmed by also earning a spot in the *existing* detail-confirmation
+# shortlist (see `itaka.py`'s `_detail_shortlist`) -- never a second request.
+
+WATCHLIST_ENTRY: HotelWatchlistEntry = {
+    "name": "Synthetic Hotel",
+    "aliases": [],
+    "country": "BG",
+    "people": 2,
+    "max_price_per_person": "2300",
+    "min_nights": 7,
+    "airports": ["LCJ", "WAW", "WMI", "KTW", "WRO"],
+}
+
+
+def _priced(raw: dict[str, object], person_price: int, group_price: int) -> dict[str, object]:
+    """`raw`, repriced to `person_price` (cents) per adult / `group_price` total."""
+    text = json.dumps(raw).replace("140000", str(person_price)).replace("280000", str(group_price))
+    result: dict[str, object] = json.loads(text)
+    return result
+
+
+def test_watchlist_candidate_above_max_price_gets_detail_confirmed(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: 2220 PLN/person -- above the standard 1500 cap (so
+    # filtering.matches_criteria would reject it outright), but within the
+    # watchlist entry's own 2300 cap. Without the watchlist-aware shortlist,
+    # this candidate would never be eligible for the one available detail
+    # request.
+    expensive = _priced(raw, 220000, 440000)
+    body = _link_page([expensive], {"fixture-1": _rate_link("fixture-1")}, take=1)
+    transport = FakeTransport(
+        [
+            response("User-agent: *\nDisallow: /api*"),
+            response(body),
+            response("<html>no detail data</html>"),
+        ]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"],
+        settings.filters,
+        transport,
+        sleep=lambda _: None,
+        hotel_watchlist=[WATCHLIST_ENTRY],
+    )
+
+    provider.fetch()
+
+    # Assert: the one detail request was actually spent on this candidate.
+    assert len(transport.urls) == 3
+    assert "fixture-1" in transport.urls[-1]
+
+
+def test_watchlist_candidate_wins_the_scarce_detail_request_over_a_standard_candidate(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Arrange: two candidates on one page. fixture-1 (listed first) is a
+    # different, cheap hotel already eligible for the *standard* search;
+    # fixture-2 is the watched hotel, priced above the standard cap. With only
+    # one detail request available, it must go to the watched hotel, not the
+    # one listed first -- this never spends an extra request, it only
+    # reorders which candidate gets the existing one.
+    standard_eligible = json.loads(json.dumps(raw).replace("Synthetic Hotel", "Cheap Other Hotel"))
+    watchlisted = _priced(
+        json.loads(json.dumps(raw).replace("fixture-1", "fixture-2")), 220000, 440000
+    )
+    body = _link_page(
+        [standard_eligible, watchlisted],
+        {"fixture-1": _rate_link("fixture-1"), "fixture-2": _rate_link("fixture-2")},
+        take=2,
+    )
+    transport = FakeTransport(
+        [
+            response("User-agent: *\nDisallow: /api*"),
+            response(body),
+            response("<html>no detail data</html>"),
+        ]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"],
+        settings.filters,
+        transport,
+        sleep=lambda _: None,
+        hotel_watchlist=[WATCHLIST_ENTRY],
+    )
+
+    provider.fetch()
+
+    assert len(transport.urls) == 3
+    assert "fixture-2" in transport.urls[-1]
+    assert "fixture-1" not in transport.urls[-1]
+
+
+def test_watchlist_widening_never_relaxes_the_standard_search_price_cap(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # A watchlisted, above-cap offer must still fail the *standard* search's
+    # own 1500 PLN/person cap regardless of detail confirmation -- the
+    # watchlist widening only reaches the detail-confirmation shortlist, never
+    # `filtering.matches()` itself.
+    expensive = _priced(raw, 220000, 440000)
+    body = _link_page([expensive], {"fixture-1": _rate_link("fixture-1")}, take=1)
+    transport = FakeTransport(
+        [
+            response("User-agent: *\nDisallow: /api*"),
+            response(body),
+            response("<html>no detail data</html>"),
+        ]
+    )
+    provider = ItakaProvider(
+        settings.providers["itaka"],
+        settings.filters,
+        transport,
+        sleep=lambda _: None,
+        hotel_watchlist=[WATCHLIST_ENTRY],
+    )
+
+    offers = provider.fetch()
+
+    assert len(offers) == 1
+    assert not matches(offers[0], settings.filters)
+
+
+def test_configured_watchlist_with_no_match_changes_nothing(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # A configured watchlist that simply has no hit on this page must behave
+    # exactly like the pre-existing (no-watchlist) shortlist: no extra
+    # request, same ineligible-candidate rejection. A different hotel name
+    # keeps this candidate outside the watchlist's own identity match too --
+    # otherwise it would earn a detail request through the watchlist branch
+    # regardless of its unmapped airport (see the two tests above).
+    ineligible = json.loads(json.dumps(raw).replace("Synthetic Hotel", "Unrelated Hotel"))
+    ineligible["segments"][0]["departure"]["title"] = "Nieznane Miasto"
+    body = _link_page([ineligible], {"fixture-1": _rate_link("fixture-1")}, take=1)
+    transport = FakeTransport([response("User-agent: *\nDisallow: /api*"), response(body)])
+    provider = ItakaProvider(
+        settings.providers["itaka"],
+        settings.filters,
+        transport,
+        sleep=lambda _: None,
+        hotel_watchlist=[WATCHLIST_ENTRY],
+    )
+
+    offers = provider.fetch()
+
+    assert len(transport.urls) == 2
+    assert offers[0].price_is_complete is False
+
+
+def test_default_hotel_watchlist_is_empty_and_behaves_like_before(
+    raw: dict[str, object], settings: Settings
+) -> None:
+    # Omitting hotel_watchlist entirely (e.g. an existing caller/test built
+    # before this feature) must keep the original standard-only shortlist.
+    expensive = _priced(raw, 220000, 440000)
+    body = _link_page([expensive], {"fixture-1": _rate_link("fixture-1")}, take=1)
+    transport = FakeTransport([response("User-agent: *\nDisallow: /api*"), response(body)])
+    provider = ItakaProvider(
+        settings.providers["itaka"], settings.filters, transport, sleep=lambda _: None
+    )
+
+    offers = provider.fetch()
+
+    assert len(transport.urls) == 2  # no detail request: too expensive, no watchlist configured
+    assert offers[0].price_is_complete is False

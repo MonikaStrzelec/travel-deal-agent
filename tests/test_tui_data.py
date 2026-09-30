@@ -293,6 +293,74 @@ def test_search_xhr_duration_rule_requires_days_equal_duration() -> None:
         normalize_offer(offer(duration=7), NOW)
 
 
+def _night_flight_offer(**overrides: object) -> dict[str, Any]:
+    # 22.11 -> 29.11 is 7 calendar days but 6 nights: the return flight leaves 28.11
+    # at 21:20 and lands 29.11 at 00:30, so `returnDate` is the landing day.
+    return_flight = {
+        "departure": {"date": "28.11.2026", "time": "21:20"},
+        "arrival": {"date": "29.11.2026", "time": "00:30"},
+    }
+    fields: dict[str, Any] = {
+        "departureDate": "22.11.2026",
+        "returnDate": "29.11.2026",
+        "duration": 6,
+        "returnFlight": return_flight,
+    }
+    fields.update(overrides)
+    return offer(**fields)
+
+
+def test_midnight_crossing_return_flight_is_accepted_with_nights_as_duration() -> None:
+    result = normalize_offer(_night_flight_offer(), NOW)
+
+    assert result.number_of_days == 6
+    assert result.return_date == date(2026, 11, 29)
+    assert "lands the day after" in (result.price_notes or "")
+
+
+def test_normal_stay_does_not_get_night_flight_note() -> None:
+    result = normalize_offer(offer(), NOW)
+
+    assert "lands the day after" not in (result.price_notes or "")
+
+
+def test_plus_one_without_flight_data_is_still_rejected() -> None:
+    raw = _night_flight_offer()
+    del raw["returnFlight"]
+
+    with pytest.raises(ValueError, match="nights disagree"):
+        normalize_offer(raw, NOW)
+
+
+def test_plus_one_with_same_day_return_flight_is_still_rejected() -> None:
+    raw = _night_flight_offer(
+        returnFlight={
+            "departure": {"date": "29.11.2026", "time": "00:30"},
+            "arrival": {"date": "29.11.2026", "time": "02:30"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="nights disagree"):
+        normalize_offer(raw, NOW)
+
+
+def test_plus_one_with_unparseable_flight_date_is_rejected() -> None:
+    raw = _night_flight_offer(
+        returnFlight={
+            "departure": {"date": "not a date"},
+            "arrival": {"date": "29.11.2026"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="nights disagree"):
+        normalize_offer(raw, NOW)
+
+
+def test_larger_mismatch_is_rejected_even_with_night_flight_data() -> None:
+    with pytest.raises(ValueError, match="nights disagree"):
+        normalize_offer(_night_flight_offer(duration=5), NOW)
+
+
 def test_search_xhr_duration_matches_when_equal_to_date_diff() -> None:
     # Arrange: a search_xhr-shaped record (date_diff == duration, per the real
     # MLA13036 observation: 04.12-10.12, duration=6).

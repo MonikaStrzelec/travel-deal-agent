@@ -40,10 +40,11 @@ authority that enforces the real per-person price cap on the normalized per-pers
 offer price.
 """
 
+from collections.abc import Sequence
 from decimal import Decimal
 from urllib.parse import quote
 
-from ..config_types import FilterConfig
+from ..config_types import FilterConfig, HotelWatchlistEntry
 
 PATH = "/wypoczynek/wyniki-wyszukiwania-samolot"
 
@@ -197,6 +198,126 @@ def build_search_path(filters: FilterConfig, *, page: int = 1) -> str:
         tokens += ["tripAdvisorRating", rating]
     tokens += ["tripType", "WS"]
     tokens += ["dF", duration_from, "dT", duration_to]
+
+    q = ":" + ":".join(tokens)
+    suffix = f"&page={page}" if page != 1 else ""
+    return f"{PATH}?q={quote(q, safe='')}&fullPrice=false{suffix}"
+
+
+# --- Hotel watchlist: a second, independent search query -----------------------
+#
+# `filters["max_price"]` (via `_price_ceiling` above) is exactly what keeps
+# `build_search_path`'s own `amountRange` facet -- sent straight to TUI's own
+# search API -- from ever returning a watched hotel priced above the standard
+# 1500 PLN/person cap: this is a query-level block, not merely a client-side
+# filter, so a watched hotel above that cap can never appear in `fetch()`'s own
+# results at all. `build_watchlist_search_path` below is a second, independent
+# query built the same way but never derived from `filters`, so a watched
+# hotel's own (higher) price ceiling reaches TUI's own search instead. See
+# `tui.py`'s `fetch_watchlist_offers` for how this is used -- entirely separate
+# from `fetch()`, one extra listing request plus up to `max_detail_requests`
+# confirmations, matching ITAKA's/wakacje.pl's own separate, small watchlist
+# budget.
+
+
+def _watchlist_price_ceiling(entries: Sequence[HotelWatchlistEntry]) -> str:
+    """The widest configured two-adult watchlist cap, scaled like `_price_ceiling`.
+
+    Never derived from `filters["max_price"]`: a watched hotel has its own,
+    independent price ceiling (`config_types.HotelWatchlistEntry`) that must
+    never be narrowed by the standard search's cap. Entries for a party size
+    other than two adults are excluded here (same POC limitation as `_party`
+    above) rather than raising, so one unsupported entry never blocks a search
+    for the others.
+    """
+    ceilings = [Decimal(entry["max_price_per_person"]) for entry in entries if entry["people"] == 2]
+    if not ceilings:
+        raise ValueError("No two-adult hotel_watchlist entry to search TUI for")
+    return "#" + format(max(ceilings) * 2, "f")
+
+
+PROVIDER_NAME = "tui"
+
+
+def _destination(entry: HotelWatchlistEntry) -> str | None:
+    return entry.get("provider_destinations", {}).get(PROVIDER_NAME)
+
+
+def split_watchlist_entries(
+    entries: Sequence[HotelWatchlistEntry],
+) -> tuple[list[HotelWatchlistEntry], list[HotelWatchlistEntry]]:
+    """Two-adult entries with a configured TUI destination code, and those without.
+
+    Kept apart because TUI's `c:<code>` facet is a hard filter: one query mixing
+    both kinds would silently hide every unscoped entry's hotel.
+    """
+    supported = [entry for entry in entries if entry["people"] == 2]
+    scoped = [entry for entry in supported if _destination(entry) is not None]
+    return scoped, [entry for entry in supported if _destination(entry) is None]
+
+
+def _watchlist_destinations(entries: Sequence[HotelWatchlistEntry]) -> list[str]:
+    """Sorted, de-duplicated destination codes; empty unless EVERY entry has one."""
+    codes = [_destination(entry) for entry in entries]
+    if not codes or any(code is None for code in codes):
+        return []
+    return sorted({code for code in codes if code is not None})
+
+
+def _watchlist_airports(entries: Sequence[HotelWatchlistEntry]) -> list[str]:
+    """The union of every (two-adult) watched hotel's own configured airports."""
+    codes = sorted({airport for entry in entries for airport in entry["airports"]})
+    selected = [a for a in codes if a not in DISABLED_AIRPORTS]
+    unknown = [a for a in selected if a not in KNOWN_AIRPORTS]
+    if unknown:
+        raise ValueError(f"Unsupported TUI airport code(s): {unknown}")
+    if not selected:
+        raise ValueError("No TUI-enabled airport remains after excluding disabled codes")
+    return selected
+
+
+def build_watchlist_search_path(entries: Sequence[HotelWatchlistEntry], *, page: int = 1) -> str:
+    """Build a second, independent TUI search query for the hotel watchlist only.
+
+    Entirely separate from `build_search_path`: never derives its price
+    ceiling, board or star facets from `filters` -- a watched hotel is never
+    subject to `filters["max_price"]` or the board/rating/star rules (see
+    `config_types.HotelWatchlistEntry`). Board and star facets are
+    deliberately loosened to every confirmed option (all of `BOARD_FACETS`,
+    the lowest confirmed `minHotelCategory` code) rather than the standard
+    search's own `allowed_boards`/`min_stars`: narrowing either here could
+    otherwise hide the watched hotel's own actual board/star listing from this
+    query's results before `watchlist.matches()` (which checks neither) ever
+    gets a chance to evaluate it. Duration reuses the same confirmed,
+    unrestricted `dF:6:dT:14` default as `build_search_path` -- still a
+    superset of every watchlist entry's own `min_nights`/`max_nights` in
+    production today.
+
+    `c:<code>` destination tokens (confirmed live 2026-09-30: the site's own
+    destination picker sends one per destination code, e.g. `c:HRG`) are added
+    only when EVERY given entry configures `provider_destinations["tui"]`;
+    callers pass scoped and unscoped entries separately (see
+    `split_watchlist_entries`). A destination-scoped query is typically one
+    page, versus dozens for the global price-sorted listing.
+
+    Only entries usable by this POC (`entry["people"] == 2`) are considered;
+    an empty result after that filter raises (see `_watchlist_price_ceiling`),
+    since there is then nothing left to search TUI for.
+    """
+    if page < 1:
+        raise ValueError("TUI page must be a positive integer")
+    tokens: list[str] = ["price", "byPlane", "T"]
+    for airport in _watchlist_airports(entries):
+        tokens += ["a", airport]
+    tokens += ["ctAdult", "2", "ctChild", "0"]
+    for destination in _watchlist_destinations(entries):
+        tokens += ["c", destination]
+    tokens += ["amountRange", _watchlist_price_ceiling(entries)]
+    for group in BOARD_FACETS.values():
+        tokens += ["board", group]
+    tokens += ["minHotelCategory", STAR_CODES[min(STAR_CODES)]]
+    tokens += ["tripType", "WS"]
+    tokens += ["dF", str(DURATION_FROM), "dT", str(DURATION_TO)]
 
     q = ":" + ":".join(tokens)
     suffix = f"&page={page}" if page != 1 else ""

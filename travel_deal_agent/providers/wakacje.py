@@ -66,15 +66,64 @@ Known limitation: this query string's pagination was only directly confirmed
 for page 2 (the real on-page link). Pages 3+ extrapolate that confirmed
 `str-<n>,<query>` shape to further page numbers, never separately
 re-verified page-by-page.
+
+## Hotel watchlist: a second, independent, per-hotel targeted fetch
+
+`fetch_watchlist_offers()` is entirely separate from `fetch()` above: it never
+runs as part of the standard combined-query scan, never touches
+`CONFIRMED_SEARCH_QUERY`/`max_pages`, and a failure in it is isolated by the
+caller (`Scheduler.run_once`) so it can never stop the standard search.
+
+Manual inspection confirmed the site's own flow for reaching one
+specific hotel: typing its name into the site's search box resolves it (via
+the site's own autocomplete) to a dedicated listing page,
+`https://www.wakacje.pl/wczasy/<hotel-slug>-h<hotelId>/`. That autocomplete
+step itself is not reproduced here -- it is expected to live behind the
+`/ajax/`/`*.json` surface robots.txt disallows outright (same reasoning as
+`RECONNAISSANCE.md`'s finding for the bare `/oferty/...` detail page, sec
+12.2) -- so this project never attempts to resolve a hotel name to that URL
+itself. Instead, `HotelWatchlistEntry.provider_listings["wakacje.pl"]` in
+`hotel_watchlist.json` carries the already-resolved URL, confirmed once by a
+human the same way any other manual lookup would be, and reused here purely
+as a targeted listing to fetch. Swapping to a different hotel is therefore a
+`hotel_watchlist.json` edit only, never a code change, and Python never
+constructs or guesses that URL.
+
+The dedicated page still lives under `/wczasy/`, the same route family and
+`__NEXT_DATA__` shape `wakacje_data.py` already parses. **Live-confirmed
+2026-09-28** (two authorized, bounded GETs, no Playwright): plain HTTP
+returns a populated `__NEXT_DATA__.offers.data` (9-10 real offers), the
+existing `decode_next_data`/`extract_offers` parsing worked unchanged, and
+`?tanio` demonstrably re-sorted the results ascending by price (unsorted
+baseline vs. a strictly increasing sequence with the flag). One real offer in
+the `?tanio` response had no departure airport at all (a non-flight product,
+the same phenomenon already known for the general listing's own `?tanio`,
+CURRENT_STATE.md sec "Sorting (tanio)") -- it is rejected by the existing
+`_AIRPORT_CODE` check in `normalize_offer` and simply skipped, not a parser
+gap. One real difference from `fetch()`'s page: **this URL never includes
+`za-osobe`, so `price` is the party total, not per-person** (site's own
+confirmed default, RECONNAISSANCE.md sec 8a.1) -- see `price_view="total"`
+below and `wakacje_data.normalize_offer`'s docstring.
+
+Sort is the confirmed `tanio` slug (`order` filter, cheapest first --
+`RECONNAISSANCE.md` sec 11.3, the site's own sidebar-filter catalog), applied
+as a single query-string flag exactly like every other single-flag filter
+this provider already uses (`?z-wroclawia` etc.) -- never guessed, never
+combined with any other flag in the same URL. One request per watched hotel
+that has a `wakacje.pl` entry, plus one shared `robots.txt` read; no
+pagination is attempted (unconfirmed whether the dedicated page has more than
+one page of results beyond the ~9-10 offers seen so far -- not yet an issue
+for a single hotel with a handful of date variants).
 """
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from urllib.error import URLError
+from urllib.parse import urlsplit
 
-from ..config_types import FilterConfig, ProviderConfig
+from ..config_types import FilterConfig, HotelWatchlistEntry, ProviderConfig
 from ..models import Offer, utc_now
 from .base import Provider
 from .http import RequestBudget, Transport, UrllibTransport
@@ -108,6 +157,30 @@ CONFIRMED_SEARCH_QUERY = (
 # filter/sort effect) -- each page uses exactly what was confirmed for it,
 # nothing inferred beyond that.
 _PAGE_1_SUFFIX = "&src=fromFilters"
+
+# The confirmed cheapest-first sort slug for a per-hotel watchlist fetch (see
+# the module docstring's "Hotel watchlist" section) -- the site's own `order`
+# filter, RECONNAISSANCE.md sec 11.3. Not combined with any other flag.
+_WATCHLIST_SORT_QUERY = "tanio"
+
+
+def _watchlist_listing_path(url: str) -> str:
+    """The confirmed dedicated hotel URL's path, plus the confirmed sort flag.
+
+    Only the path is kept -- any query string already on the configured URL
+    (e.g. a `?src=fromSearch` UI-navigation tracking parameter, the same kind
+    of artifact `_PAGE_1_SUFFIX` above already documents for the standard
+    search) is dropped and replaced with exactly one flag, `?tanio`. Raises if
+    the configured URL is not a `https://www.wakacje.pl` URL -- config
+    validation (`config._validate_hotel_watchlist`) already checks this at
+    load time, but `fetch_watchlist_offers` checks it again here so a future
+    caller of this function can never send a request to an unintended host.
+    """
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.netloc != "www.wakacje.pl":
+        raise ValueError("hotel_watchlist provider_listings.wakacje.pl must be a wakacje.pl URL")
+    path = parts.path if parts.path.endswith("/") else parts.path + "/"
+    return f"{path}?{_WATCHLIST_SORT_QUERY}"
 
 
 class WakacjeProvider(Provider):
@@ -179,5 +252,73 @@ class WakacjeProvider(Provider):
             "Wakacje.pl: %s offers from the confirmed combined search query, up to %s page(s)",
             len(offers),
             max_pages,
+        )
+        return offers
+
+    def fetch_watchlist_offers(self, entries: Sequence[HotelWatchlistEntry]) -> list[Offer]:
+        """One targeted, cheapest-first fetch per watched hotel with a
+        confirmed `wakacje.pl` dedicated listing URL (see the module
+        docstring's "Hotel watchlist" section for the full mechanism).
+
+        Entirely separate from `fetch()`: its own small request budget (one
+        shared `robots.txt` read plus one request per watched hotel), never
+        sharing or affecting `fetch()`'s own `max_pages`/`max_requests`. A
+        watched hotel without a `provider_listings["wakacje.pl"]` entry is
+        silently skipped here (nothing to fetch), not an error. A robots
+        violation or transient network error for *one hotel's own listing*
+        skips only that hotel and logs a warning. A failure reading the
+        shared `robots.txt` itself (blocked, malformed, non-200) still fails
+        closed and raises out of this method, exactly like `fetch()` --
+        `Scheduler.run_once` isolates any call to this method as a whole, so
+        even that case can never stop the standard search.
+        """
+        targets = [
+            (entry, listing_url)
+            for entry in entries
+            if (listing_url := entry.get("provider_listings", {}).get(self.name))
+        ]
+        if not targets:
+            return []
+        cfg = self.configuration
+        budget = RequestBudget(
+            self.transport,
+            1 + len(targets),
+            cfg.get("timeout_seconds", 15),
+            cfg.get("cycle_seconds", 60),
+            cfg.get("request_gap_seconds", 5),
+            self.clock,
+            self.sleep,
+        )
+        robots = budget.get(BASE + "/robots.txt").text
+        now = self.wall_clock()
+        offers: list[Offer] = []
+        for entry, listing_url in targets:
+            try:
+                path_and_query = _watchlist_listing_path(listing_url)
+                budget.gap = max(budget.gap, robots_policy(robots, path_and_query))
+            except ValueError as exc:
+                logger.warning(
+                    "Wakacje.pl watchlist listing for %r skipped (%s)", entry["name"], exc
+                )
+                continue
+            try:
+                body = budget.get(BASE + path_and_query).text
+            except (TimeoutError, URLError) as exc:
+                logger.warning(
+                    "Wakacje.pl watchlist fetch for %r skipped after a transient network "
+                    "error (%s); no retry",
+                    entry["name"],
+                    exc,
+                )
+                continue
+            # No `za-osobe` flag on this URL (see `_watchlist_listing_path`),
+            # so the site's own confirmed default price view applies here:
+            # the party total, not per-person (live-confirmed 2026-09-28; see
+            # `wakacje_data.normalize_offer`'s `price_view` docstring).
+            offers.extend(parse_listing(body, now, price_view="total"))
+        logger.info(
+            "Wakacje.pl watchlist: %s offer(s) from %s targeted hotel listing(s)",
+            len(offers),
+            len(targets),
         )
         return offers

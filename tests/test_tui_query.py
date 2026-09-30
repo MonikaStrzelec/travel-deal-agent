@@ -1,12 +1,17 @@
 """Offline tests for the deterministic TUI search-URL builder; no network access."""
 
 import copy
+from typing import cast
 
 import pytest
 
 from travel_deal_agent.config import Settings
-from travel_deal_agent.config_types import FilterConfig
-from travel_deal_agent.providers.tui_query import PATH, build_search_path
+from travel_deal_agent.config_types import FilterConfig, HotelWatchlistEntry
+from travel_deal_agent.providers.tui_query import (
+    PATH,
+    build_search_path,
+    build_watchlist_search_path,
+)
 
 
 def filters(settings: Settings, **overrides: object) -> FilterConfig:
@@ -222,3 +227,92 @@ def test_explicit_page_appends_the_confirmed_parameter_name(settings: Settings) 
 def test_nonpositive_page_is_rejected(settings: Settings) -> None:
     with pytest.raises(ValueError, match="page"):
         build_search_path(settings.filters, page=0)
+
+
+# --- build_watchlist_search_path: a second, independent query -----------------
+
+
+def watchlist_entry(**overrides: object) -> HotelWatchlistEntry:
+    base: dict[str, object] = {
+        "name": "Test Watchlist Hotel",
+        "aliases": [],
+        "country": "EG",
+        "people": 2,
+        "max_price_per_person": "2300",
+        "min_nights": 7,
+        "airports": ["LCJ", "WAW", "WMI", "KTW", "WRO"],
+    }
+    base.update(overrides)
+    return cast(HotelWatchlistEntry, base)
+
+
+def test_watchlist_price_ceiling_uses_the_entry_cap_not_global_filters() -> None:
+    # 2300 PLN/person * 2 adults = 4600, never the standard search's 3000.
+    url = build_watchlist_search_path([watchlist_entry()])
+    assert "amountRange%3A%234600" in url
+    assert "%233000" not in url
+
+
+def test_watchlist_price_ceiling_uses_the_widest_configured_entry() -> None:
+    entries = [watchlist_entry(max_price_per_person="1800"), watchlist_entry(name="Other Hotel")]
+    url = build_watchlist_search_path(entries)
+    assert "amountRange%3A%234600" in url  # max(1800, 2300) * 2
+
+
+def test_watchlist_entries_for_other_party_sizes_are_excluded_not_fatal() -> None:
+    entries = [watchlist_entry(people=3), watchlist_entry(name="Other Hotel")]
+    url = build_watchlist_search_path(entries)
+    assert "amountRange%3A%234600" in url
+
+
+def test_watchlist_search_requires_at_least_one_two_adult_entry() -> None:
+    with pytest.raises(ValueError, match="two-adult"):
+        build_watchlist_search_path([watchlist_entry(people=3)])
+
+
+def test_watchlist_search_covers_every_confirmed_board_regardless_of_allowed_boards() -> None:
+    # Unlike build_search_path, this never narrows to filters["allowed_boards"]
+    # -- the watchlist has no board rule at all (config_types.HotelWatchlistEntry).
+    url = build_watchlist_search_path([watchlist_entry()])
+    assert "GT06-AI%20GT06-XX%20GT06-AIP" in url
+    assert "GT06-FB%20GT06-FBP" in url
+    assert "GT06-HB%20GT06-HBP" in url
+
+
+def test_watchlist_search_uses_the_lowest_confirmed_star_threshold() -> None:
+    url = build_watchlist_search_path([watchlist_entry()])
+    assert "minHotelCategory%3A3s" in url
+
+
+def test_watchlist_search_uses_the_union_of_configured_airports() -> None:
+    entries = [
+        watchlist_entry(airports=["LCJ"]),
+        watchlist_entry(name="Other Hotel", airports=["WRO", "KTW"]),
+    ]
+    url = build_watchlist_search_path(entries)
+    for code in ("LCJ", "WRO", "KTW"):
+        assert f"a%3A{code}" in url
+    assert "WAW" not in url
+
+
+def test_watchlist_search_excludes_the_disabled_wmi_airport() -> None:
+    url = build_watchlist_search_path([watchlist_entry(airports=["WMI", "LCJ"])])
+    assert "WMI" not in url
+    assert "a%3ALCJ" in url
+
+
+def test_watchlist_search_uses_the_confirmed_unrestricted_duration() -> None:
+    url = build_watchlist_search_path([watchlist_entry(min_nights=7, max_nights=7)])
+    assert "dF%3A6" in url and "dT%3A14" in url
+
+
+def test_watchlist_search_page_parameter_matches_the_standard_builder() -> None:
+    url = build_watchlist_search_path([watchlist_entry()], page=2)
+    assert url.endswith("&page=2")
+    with pytest.raises(ValueError, match="page"):
+        build_watchlist_search_path([watchlist_entry()], page=0)
+
+
+def test_watchlist_search_is_pure_and_deterministic() -> None:
+    entries = [watchlist_entry()]
+    assert build_watchlist_search_path(entries) == build_watchlist_search_path(entries)

@@ -88,7 +88,10 @@ def main() -> None:
         scheduler = Scheduler(
             settings,
             build_providers(
-                settings.providers, filters=settings.filters, attractiveness=settings.attractiveness
+                settings.providers,
+                filters=settings.filters,
+                attractiveness=settings.attractiveness,
+                hotel_watchlist=settings.hotel_watchlist,
             ),
             store,
             notifier,

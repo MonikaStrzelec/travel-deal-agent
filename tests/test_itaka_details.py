@@ -775,7 +775,11 @@ def test_provider_preserves_mismatch_diagnostic(
         ]
     )
     provider = ItakaProvider(
-        settings.providers["itaka"], permissive_filters(settings), transport, sleep=lambda _: None
+        settings.providers["itaka"],
+        permissive_filters(settings),
+        transport,
+        sleep=lambda _: None,
+        today=lambda: date(2026, 9, 12),
     )
     # Act
     offers = provider.fetch()
@@ -811,7 +815,13 @@ def test_provider_detail_budget_and_failure_behavior(mode: str, settings: Settin
             ),
         ]
     )
-    provider = ItakaProvider(cfg, permissive_filters(settings), transport, sleep=lambda _: None)
+    provider = ItakaProvider(
+        cfg,
+        permissive_filters(settings),
+        transport,
+        sleep=lambda _: None,
+        today=lambda: date(2026, 9, 12),
+    )
     # Act / Assert
     if mode in {"robots", "http"}:
         with pytest.raises(ValueError):

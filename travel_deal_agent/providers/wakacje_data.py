@@ -34,9 +34,16 @@ only to validate the source shape -- it is never iterated to fabricate additiona
 offers: it carries no per-city price or code, and its own contents are contextual
 to the specific fetch, not a fixed hotel property.
 
-`ratingReservationCount`'s exact semantics (booking count vs. review count) are not
-confirmed; it is parsed for shape validation only and never copied into
-`Offer.number_of_reviews`.
+`ratingReservationCount` is the review count shown on-page: live-confirmed
+2026-09-28 by fetching the dedicated Neverland listing and the confirmed
+combined search query (two plain HTTP GETs, no Playwright) and comparing each
+offer's `ratingReservationCount` against the same page's own server-rendered
+`OpinionsCount-Paragraph` text next to its `RateBox-Paragraph` rating -- exact
+match for every offer on both pages (Neverland: 906 and "906 opinii"; several
+other hotels e.g. Alion: 8.6 and "12 opinii", Meridian: 8.0 and "159 opinii").
+It is therefore mapped to `Offer.number_of_reviews`. `ratingRecommends` was
+observed identical to `ratingReservationCount` on every offer checked and is
+still not separately parsed.
 """
 
 import hashlib
@@ -46,6 +53,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from html.parser import HTMLParser
+from typing import Literal
 
 from pydantic import Field, ValidationError
 
@@ -275,9 +283,10 @@ def variant_identity(raw: RawOffer, departure_date: date) -> str:
 
     The numeric source `id` alone is not a stable variant identifier: the same id was
     observed, across two different departure-airport fetches, with a different
-    departure date and price. Only fields whose variant-defining role is confirmed
-    are included -- nothing with unconfirmed semantics (e.g. `departurePlaces`,
-    `ratingReservationCount`) is added.
+    departure date and price. Only fields confirmed to define a distinct variant are
+    included -- `ratingReservationCount` (the review count, see the module docstring)
+    is a hotel-level property, not variant-defining, and `departurePlaces` carries no
+    per-city price or code, so neither is added here.
     """
     identity = {
         "source_id": raw.id,
@@ -295,6 +304,7 @@ def normalize_offer(
     *,
     requested_departure_airport: str | None = None,
     offer_links: dict[int, str] | None = None,
+    price_view: Literal["per_person", "total"] = "per_person",
 ) -> Offer:
     """Normalize one already-specific Wakacje.pl listing card.
 
@@ -306,6 +316,18 @@ def normalize_offer(
     `offer_links`, when given (from `extract_offer_links` on the same fetched
     HTML), maps this offer's numeric id to its real on-page href, which is
     preferred over the reconstructed slug URL below -- see `OfferLinkParser`.
+
+    `price_view` says which of the site's own two price-view toggles produced
+    `raw.price`: `"per_person"` (the confirmed combined search's `za-osobe`
+    flag, `fetch()`'s only caller today -- default, unchanged) or `"total"`
+    (the site's own confirmed default when `za-osobe` is absent, e.g. the
+    watchlist's targeted per-hotel fetch, which never adds that flag -- see
+    `wakacje.py`'s `fetch_watchlist_offers`). Live-confirmed 2026-09-28: a
+    real per-hotel listing page returned unmistakably party-total-shaped
+    prices (~5000-6900 PLN for a 7-night stay) when fetched without
+    `za-osobe`, matching this project's own prior finding for the site's
+    price-view default (RECONNAISSANCE.md sec 8a.1) -- not re-guessed here,
+    just applied to a URL that doesn't override that default.
     """
     raw = RawOffer.model_validate(raw_dict)
     if not _AIRPORT_CODE.fullmatch(raw.departurePlaceCode):
@@ -324,10 +346,14 @@ def normalize_offer(
     if (returning - departure).days != raw.duration:
         raise ValueError("Wakacje.pl duration disagrees with departure/return dates")
 
-    # `price` is per person because the confirmed query includes `za-osobe`
-    # (the page's own "średnia za osobę" price-view toggle).
-    price_per_person = Decimal(raw.price)
-    total_price = price_per_person * Decimal(ASSUMED_PARTY_SIZE)
+    # See `price_view`'s docstring above for exactly which page shape each
+    # branch corresponds to.
+    if price_view == "per_person":
+        price_per_person = Decimal(raw.price)
+        total_price = price_per_person * Decimal(ASSUMED_PARTY_SIZE)
+    else:
+        total_price = Decimal(raw.price)
+        price_per_person = total_price / Decimal(ASSUMED_PARTY_SIZE)
 
     country = COUNTRIES.get(raw.place.country.slug)
     places = [raw.place.region.name, raw.place.city.name]
@@ -375,9 +401,9 @@ def normalize_offer(
         currency=raw.originalCurrency,
         hotel_stars=raw.category,
         rating=rating,
-        # ratingReservationCount's exact semantics are not confirmed; never
-        # mapped to number_of_reviews to avoid asserting an unconfirmed meaning.
-        number_of_reviews=None,
+        # ratingReservationCount is the review count shown on-page; see the
+        # module docstring for the live confirmation.
+        number_of_reviews=raw.ratingReservationCount,
         provider_rating_max=10.0,
         board_type=SERVICE_BOARDS.get(raw.service),
         url=url,
@@ -386,10 +412,13 @@ def normalize_offer(
         price_is_complete=False,
         variant_verified=False,
         price_notes=(
-            f"Board detail: {raw.serviceDesc}; raw ratingReservationCount="
-            f"{raw.ratingReservationCount} (semantics unconfirmed, not mapped to reviews); "
-            f"per-person price (za-osobe), total computed for {ASSUMED_PARTY_SIZE} adults, "
-            f"mandatory costs not verified"
+            f"Board detail: {raw.serviceDesc}; "
+            + (
+                "per-person price (za-osobe), total computed"
+                if price_view == "per_person"
+                else "total party price (no za-osobe), per-person computed"
+            )
+            + f" for {ASSUMED_PARTY_SIZE} adults; mandatory costs not verified"
         ),
         price_verification_reason=(
             "Listing-only observation; Wakacje.pl's detail page carries no offer-specific "
@@ -404,8 +433,13 @@ def parse_listing(
     observed_at: datetime,
     *,
     requested_departure_airport: str | None = None,
+    price_view: Literal["per_person", "total"] = "per_person",
 ) -> list[Offer]:
-    """Full offline pipeline: decode, extract, normalize; skip unreadable records."""
+    """Full offline pipeline: decode, extract, normalize; skip unreadable records.
+
+    `price_view` is passed straight through to `normalize_offer` -- see its
+    docstring.
+    """
     next_data = decode_next_data(html)
     raw_offers = extract_offers(next_data)
     offer_links = extract_offer_links(html)
@@ -418,6 +452,7 @@ def parse_listing(
                     observed_at,
                     requested_departure_airport=requested_departure_airport,
                     offer_links=offer_links,
+                    price_view=price_view,
                 )
             )
         except (ValidationError, ValueError, KeyError, TypeError) as exc:

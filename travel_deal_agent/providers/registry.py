@@ -1,8 +1,8 @@
 """Application composition: add provider factories without changing the scheduler."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
-from ..config_types import AttractivenessConfig, FilterConfig, ProviderConfig
+from ..config_types import AttractivenessConfig, FilterConfig, HotelWatchlistEntry, ProviderConfig
 from .base import Provider
 from .itaka import ItakaProvider
 from .mock import MockProvider
@@ -16,6 +16,7 @@ def build_providers(
     *,
     filters: FilterConfig | None = None,
     attractiveness: AttractivenessConfig | None = None,
+    hotel_watchlist: Sequence[HotelWatchlistEntry] = (),
 ) -> list[Provider]:
     """Instantiate enabled sources; reject unsupported names before doing any work.
 
@@ -24,6 +25,12 @@ def build_providers(
     mapping explicitly replaces that dispatch entirely, regardless of whether
     its contents happen to match DEFAULT_FACTORIES -- the switch is whether
     `factories` was omitted, never the identity or contents of what's passed.
+
+    `hotel_watchlist` is forwarded only to providers that use it to widen
+    their own detail-confirmation shortlist (ITAKA) or to run their own
+    separate targeted fetch (TUI, wakacje.pl -- the latter reads it from
+    `Scheduler.run_once` instead, via `fetch_watchlist_offers`); omitting it
+    simply means no watched hotel gets that special treatment.
     """
     use_builtin_dispatch = factories is None
     resolved_factories = DEFAULT_FACTORIES if factories is None else factories
@@ -36,7 +43,7 @@ def build_providers(
             # ItakaProvider.__init__): they only improve which listing
             # candidate gets the scarce detail request, so a caller that omits
             # them (as this registry itself allows) still gets a working provider.
-            providers.append(ItakaProvider(config, filters))
+            providers.append(ItakaProvider(config, filters, hotel_watchlist=hotel_watchlist))
             continue
         if name == "rainbow" and use_builtin_dispatch:
             from .rainbow import RainbowProvider

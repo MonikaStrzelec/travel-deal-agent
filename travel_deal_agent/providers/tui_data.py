@@ -19,7 +19,7 @@ repeated scans has not been independently verified.
 import json
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urljoin, urlsplit
 
@@ -75,6 +75,15 @@ class Breadcrumb(Boundary):
     url: str | None = None
 
 
+class FlightEnd(Boundary):
+    date: str
+
+
+class ReturnFlight(Boundary):
+    departure: FlightEnd
+    arrival: FlightEnd
+
+
 class TuiRawOffer(Boundary):
     """Only the fields this parser uses; everything else is ignored, not dropped."""
 
@@ -93,6 +102,7 @@ class TuiRawOffer(Boundary):
     returnDate: str
     departureTime: str
     departureAirport: str
+    returnFlight: ReturnFlight | None = None
     boardType: str
     boardCode: str
     tripAdvisorRating: float | None = None
@@ -120,11 +130,31 @@ def _date(value: str, field: str) -> date:
         raise ValueError(f"Invalid TUI {field}") from exc
 
 
+def _lands_day_after_return_departure(offer: TuiRawOffer, return_date: date) -> bool:
+    """True only if `returnDate` is the landing day of a return flight that took off the day before.
+
+    Charter flights leaving before midnight and landing after it make `returnDate` the
+    arrival date, so the calendar difference is nights + 1. Missing or unparseable
+    flight data never qualifies.
+    """
+    flight = offer.returnFlight
+    if flight is None:
+        return False
+    try:
+        departs = _date(flight.departure.date, "return flight departure date")
+        lands = _date(flight.arrival.date, "return flight arrival date")
+    except ValueError:
+        return False
+    return lands == return_date and departs == return_date - timedelta(days=1)
+
+
 def normalize_offer(raw: dict[str, object], observed_at: datetime) -> Offer:
     """Normalize one already-specific TUI variant; never split or combine options.
 
-    In search results `duration` equals the number of days between departure and
-    return; any disagreement means the record cannot be trusted.
+    `duration` is the number of nights and normally equals the calendar days between
+    departure and return. The single tolerated exception is a midnight-crossing return
+    flight (see `_lands_day_after_return_departure`); any other disagreement means the
+    record cannot be trusted.
     """
     offer = TuiRawOffer.model_validate(raw)
     if offer.soldOut:
@@ -134,7 +164,10 @@ def normalize_offer(raw: dict[str, object], observed_at: datetime) -> Offer:
     if return_date <= departure:
         raise ValueError("TUI return date does not follow departure date")
     days = (return_date - departure).days
-    if days != offer.duration:
+    night_flight = days == offer.duration + 1 and _lands_day_after_return_departure(
+        offer, return_date
+    )
+    if days != offer.duration and not night_flight:
         raise ValueError(
             "TUI nights disagree with departure/return dates (search_xhr: expected days == duration)"
         )
@@ -146,6 +179,8 @@ def normalize_offer(raw: dict[str, object], observed_at: datetime) -> Offer:
     full_price = _decimal(offer.discountFullPrice, "full price")
 
     notes: list[str] = [f"Departure time: {offer.departureTime}"]
+    if night_flight:
+        notes.append("Return flight lands the day after departing; return date is the landing day")
     if original_price != price:
         notes.append(f"Original price before discount: {original_price} {offer.currency}/person")
     match = _PARTICIPANTS.fullmatch(offer.participants)
@@ -201,7 +236,7 @@ def normalize_offer(raw: dict[str, object], observed_at: datetime) -> Offer:
         departure_airport=airport,
         departure_date=departure,
         return_date=return_date,
-        number_of_days=days,
+        number_of_days=offer.duration,
         number_of_people=number_of_people,
         price_per_person=price,
         total_price=total_price,

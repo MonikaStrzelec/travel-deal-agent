@@ -19,7 +19,7 @@ from experiments.itaka_playwright.settings import PocLimits, SearchFilters
 
 
 def meal_html(checked: str = "", hidden: bool = True) -> str:
-    """Independent fixture based on the user-supplied meal DOM."""
+    """Independent fixture based on a captured meal DOM."""
     names = {
         "A": "All inclusive",
         "V": "3 posiłki",

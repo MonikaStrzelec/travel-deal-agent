@@ -380,23 +380,52 @@ def test_missing_rating_is_none() -> None:
     assert result.rating is None
 
 
-def test_rating_reservation_count_is_never_mapped_to_number_of_reviews() -> None:
-    # Arrange: RECONNAISSANCE.md sec 8b.1 -- semantics (bookings vs. reviews) are not
-    # literally confirmed; never guessed into a specific meaning.
+def test_rating_reservation_count_is_mapped_to_number_of_reviews() -> None:
+    # Arrange: live-confirmed 2026-09-28 -- ratingReservationCount matches the
+    # same page's own server-rendered review-count text (see module docstring).
     result = normalize_offer(offer(ratingReservationCount=336), NOW)
-    assert result.number_of_reviews is None
-    # The raw value is preserved diagnostically in price_notes, not silently dropped.
-    assert "336" in (result.price_notes or "")
+    assert result.number_of_reviews == 336
 
 
-def test_missing_rating_reservation_count_still_normalizes() -> None:
+def test_missing_rating_reservation_count_yields_none_reviews() -> None:
     result = normalize_offer(offer(ratingReservationCount=None), NOW)
     assert result.number_of_reviews is None
+
+
+def test_zero_rating_reservation_count_is_kept_as_zero_not_none() -> None:
+    # Zero reviews is a valid, distinct fact from "review count unknown".
+    result = normalize_offer(offer(ratingReservationCount=0), NOW)
+    assert result.number_of_reviews == 0
 
 
 def test_negative_rating_reservation_count_is_rejected() -> None:
     with pytest.raises(ValidationError):
         normalize_offer(offer(ratingReservationCount=-1), NOW)
+
+
+def test_non_integer_rating_reservation_count_does_not_crash_parser() -> None:
+    # A schema change (e.g. site switches to a string) must be rejected loudly by
+    # pydantic validation, never crash the parser with an unhandled exception.
+    with pytest.raises(ValidationError):
+        normalize_offer(offer(ratingReservationCount="not-a-number"), NOW)
+
+
+def test_live_confirmed_neverland_values_flow_through_to_offer() -> None:
+    # Arrange: the exact rating/review-count pair live-confirmed 2026-09-28 on
+    # Wakacje.pl's own dedicated Neverland listing page (906 == the page's own
+    # server-rendered "906 opinii" text next to its "9.0" rating).
+    result = normalize_offer(
+        offer(
+            name="Pickalbatros Jungle Aqua Park Resort Neverland",
+            ratingValue=9,
+            ratingReservationCount=906,
+            ratingRecommends=906,
+        ),
+        NOW,
+    )
+    assert result.rating == 9
+    assert result.provider_rating_max == 10.0
+    assert result.number_of_reviews == 906
 
 
 # --- board / service code -------------------------------------------------------------
@@ -933,3 +962,118 @@ def test_one_internal_rating_threshold_regardless_of_price(
     candidate = {**ALION_OFFER, "price": price, "ratingValue": rating, "service": 1}
     result = normalize_offer(candidate, NOW)
     assert matches(result, settings.filters, date(2026, 9, 22)) is expected
+
+
+# --- real-world regression: 2026-09-29 Telegram-vs-checkout price investigation ---------
+#
+# Two real Telegram alerts were reported (Sol de Alcudia Apartments a10,
+# Fagus by Aycon) whose price did not match the price shown after opening the offer on
+# the live site. RECONNAISSANCE.md sec 28 has the full write-up. A bounded, controlled
+# live check that day fetched the confirmed combined search query twice -- once with
+# `za-osobe` (per-person view, what this parser always uses) and once without it (the
+# site's own total-party-price default view) -- and matched the same `id` +
+# `departureDate` + `duration` + `service` record across both. For every one of the 10
+# offers returned, including both of these hotels, `price_per_person * 2` equalled the
+# total-view price to within 1 PLN (rounding). This is the same formula
+# `normalize_offer` already applies -- these two records pin that real result as a
+# regression, confirming there is no double-division/multiplication for either hotel.
+
+SOL_DE_ALCUDIA_OFFER: dict[str, Any] = {
+    "id": 1197633,
+    "name": "Sol de Alcudia Apartments a10",
+    "urlName": "sol-de-alcudia-apartments-a10",
+    "place": {
+        "country": geo("Hiszpania", "hiszpania"),
+        "region": geo("Majorka", "majorka"),
+        "city": geo("Puerto de Alcudia", "puerto-de-alcudia"),
+    },
+    "category": 3,
+    "price": 1485,  # per-person (za-osobe); live total-view price for the same
+    # exact variant was 2969 the same session -- 1485 * 2 == 2970, a 1 PLN
+    # rounding difference, not a double-division bug.
+    "originalCurrency": "PLN",
+    "departureDate": "2027-04-01",
+    "returnDate": "2027-04-08",
+    "duration": 7,
+    "departurePlace": "Warszawa - Chopin",
+    "departurePlaceCode": "WAW",
+    "departurePlaces": ["Warszawa", "Wrocław"],
+    "service": 2,
+    "serviceDesc": "Śniadania i obiadokolacje (HB)",
+    "ratingValue": 8.4,
+    "ratingReservationCount": 1,
+}
+
+FAGUS_OFFER: dict[str, Any] = {
+    "id": 1051986,
+    "name": "Fagus by Aycon",
+    "urlName": "fagus-by-aycon",
+    "place": {
+        # "czarnogora" (Montenegro) is not in COUNTRIES -- deliberately unmapped
+        # (sec 0): country stays None, the source name is prepended to destination.
+        "country": geo("Czarnogóra", "czarnogora"),
+        "region": geo("Riwiera Czarnogórska", "riwiera-czarnogorska"),
+        "city": geo("Budva", "budva"),
+    },
+    "category": 4,
+    "price": 1470,  # per-person; live total-view price for the same exact variant
+    # was 2939 the same session -- 1470 * 2 == 2940, a 1 PLN rounding difference.
+    "originalCurrency": "PLN",
+    "departureDate": "2026-10-15",
+    "returnDate": "2026-10-24",
+    "duration": 9,
+    "departurePlace": "Katowice",
+    "departurePlaceCode": "KTW",
+    "departurePlaces": ["Wrocław", "Katowice", "Warszawa"],
+    "service": 2,
+    "serviceDesc": "Śniadania i obiadokolacje (HB)",
+    "ratingValue": 8.7,
+    "ratingReservationCount": 2,
+}
+
+
+@pytest.mark.parametrize(
+    "raw,expected_price_per_person,expected_total,expected_country",
+    [
+        pytest.param(SOL_DE_ALCUDIA_OFFER, "1485", "2970", "ES", id="sol_de_alcudia"),
+        pytest.param(FAGUS_OFFER, "1470", "2940", None, id="fagus_by_aycon"),
+    ],
+)
+def test_live_confirmed_hotels_have_no_double_division(
+    raw: dict[str, Any],
+    expected_price_per_person: str,
+    expected_total: str,
+    expected_country: str | None,
+) -> None:
+    result = normalize_offer(raw, NOW)
+    assert result.price_per_person == Decimal(expected_price_per_person)
+    assert result.total_price == Decimal(expected_total)
+    assert result.total_price == result.price_per_person * Decimal(2)
+    assert result.number_of_people == 2
+    assert result.country == expected_country
+    assert not result.price_is_complete
+
+
+SOL_DE_ALCUDIA_REAL_HREF = (
+    "https://www.wakacje.pl/oferty/hiszpania/majorka/puerto-de-alcudia/"
+    "sol-de-alcudia-apartments-a10-1197633.html?od-2027-04-01,7-dni,HB,z-warszawy"
+)
+FAGUS_REAL_HREF = (
+    "https://www.wakacje.pl/oferty/czarnogora/riwiera-czarnogorska/budva/"
+    "fagus-by-aycon-1051986.html?od-2026-10-15,9-dni,HB,z-katowic"
+)
+
+
+@pytest.mark.parametrize(
+    "raw,href",
+    [
+        pytest.param(SOL_DE_ALCUDIA_OFFER, SOL_DE_ALCUDIA_REAL_HREF, id="sol_de_alcudia"),
+        pytest.param(FAGUS_OFFER, FAGUS_REAL_HREF, id="fagus_by_aycon"),
+    ],
+)
+def test_live_confirmed_hotels_keep_their_real_variant_href(raw: dict[str, Any], href: str) -> None:
+    # Regression: the real on-page href (exact departure date/duration/board/airport)
+    # for these two real, live-checked offers is preserved untouched, not lost to the
+    # reconstructed bare-hotel URL -- see "real on-page href preservation" above.
+    result = normalize_offer(raw, NOW, offer_links={raw["id"]: href})
+    assert result.url == href
