@@ -1,11 +1,11 @@
-# Wakacje.pl — current state (handoff, last updated 2026-09-24)
+# Wakacje.pl — current state (last updated 2026-09-24)
 
 **Read this file first.** It is the authoritative, up-to-date source of truth for
 Wakacje.pl. `RECONNAISSANCE.md` in this same directory is the detailed evidence
 log behind every claim here (§1-26) — consult it for exact URLs, HTTP statuses,
 and raw response fields, but treat *this* file as correct if the two ever
 disagree (this one is newer). `AGENTS.md` (repo root) has the workflow rules.
-The project-wide handoff at `experiments/rainbow_playwright/CURRENT_STATE.md`
+The project-wide state document at `experiments/rainbow_playwright/CURRENT_STATE.md`
 still covers ITAKA/Rainbow/TUI/notifications/roadmap — not duplicated here.
 
 **One-line status (2026-09-24, RECONNAISSANCE.md §24-27):** Wakacje.pl now
@@ -27,7 +27,7 @@ warnings this run)**, 8 matched `filtering.matches()`, all 8 saved to price
 history and **delivered as real Telegram `new_offer` alerts**. Real examples
 confirmed among the matches: Meridian at both 1389 PLN/os. (KTW) and 1393
 PLN/os. (WAW), Alion at 1479 PLN/os. (WAW), Pebbles Resort at 1497 PLN/os.
-(WMI) — matching what the project owner had found manually on the site.
+(WMI) — matching offers found manually on the site.
 Full detail: §5.
 
 ---
@@ -161,7 +161,7 @@ for the full evidence trail and rationale.
   too (not re-derived down, since it was never a blocker at this lower
   count). `filters["accept_incomplete_price_from"] = ["wakacje.pl"]`.
 - **`enabled: true`** (operational session F, 2026-09-22) — an explicit,
-  separate decision by the project owner, made only after the full live
+  separate decision, made only after the full live
   validation in §23 (under the old architecture). **The scheduler HAS since
   been run** (2026-09-24, one controlled `run_once(force=True)` cycle, real
   DB writes, real Telegram delivery — RECONNAISSANCE.md §27; see the
@@ -181,8 +181,8 @@ for the full evidence trail and rationale.
   `tests/test_wakacje.py::test_registry_builds_a_disabled_wakacje_provider_without_network_access`,
   directly asserts the old "disabled by default" invariant against the real
   settings and is now simply outdated. **None of this was fixed in the
-  operational-enable session** (out of its explicitly authorized scope,
-  "WYŁĄCZNIE" the config change) — it is next-session work, see §5.
+  operational-enable step** (out of its scope, which was limited to the config
+  change) — it is follow-up work, see §5.
 
 ## 2. Confirmed airports — exact evidence level for each
 
@@ -254,10 +254,10 @@ gap are now different — read this version, not any cached copy).
 
 **What happened, in order:** (a) the old per-airport architecture (§1-§4,
 14 requests/cycle) was live-validated end to end (RECONNAISSANCE.md §21-§23);
-(b) a real business problem surfaced — the project owner's own manual search
+(b) a real business problem surfaced — a manual search on the site
 found real, cheap, matching offers (Meridian, Alion, Pebbles Resort, Costa
 Malaga) that the old architecture's default "most popular" sort never
-reached; (c) a real, human-driven browser session plus one bounded,
+reached; (c) a real, human-driven browser recording plus one bounded,
 explicitly authorized live HTTP confirmation established a single combined
 search query that reaches those same offers directly, sorted cheapest-first
 (RECONNAISSANCE.md §24-25); (d) `wakacje.py`/`wakacje_data.py` were rewritten
@@ -333,7 +333,7 @@ filter, a new unmapped country, etc.): stop, report exactly what happened
 
 ## 7. Roadmap after Wakacje.pl
 
-Per the project owner's stated priorities, in order:
+Priorities, in order:
 1. All four target airports (LCJ/WAW/KTW/WRO) are now confirmed and
    implemented (§1-§4). What remains: the one controlled live test of all
    four together (§5), then a deliberate, separately-authorized decision on

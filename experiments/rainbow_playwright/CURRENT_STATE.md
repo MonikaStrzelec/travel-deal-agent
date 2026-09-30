@@ -1,4 +1,4 @@
-# Travel Deal Agent — project state (handoff for the next session)
+# Travel Deal Agent — project state
 
 > **Note (documentation currency):** the notification-channel narrative below
 > (WhatsApp described as the preferred/target future channel, Telegram
@@ -19,8 +19,8 @@ project's existing "current state" file already lived; nothing was moved. A futu
 session may relocate it to the repo root if that turns out to be clearer.
 
 **Later the same day (2026-09-22, offline-only session, no code changes):** the
-ITAKA price-completeness question below was resolved. The project owner made a
-binding business decision on what price completeness means (§5), and an offline
+ITAKA price-completeness question below was resolved. A
+business decision was made on what price completeness means (§5), and an offline
 review against the existing code, fixtures and tests confirmed the current ITAKA
 implementation already satisfies that decision exactly — no code changes were
 needed, only this documentation was corrected.
@@ -45,7 +45,7 @@ run against the real ITAKA site: a first controlled `--watch` dry run, a longer
 confirmation is folded into §6. All three produced 0 alerts and 0
 `price_is_complete=True`, with the existing fail-closed detail-verification
 behavior holding throughout — see §1 for exactly why. Based on these results, the
-project owner made a binding decision (detailed in §4 and the updated roadmap in
+following decision was made (detailed in §4 and the updated roadmap in
 §6): **do not** wait for a first real ITAKA alert before starting
 `WhatsAppNotifier` work, and **do not** keep increasing ITAKA traffic to try to
 force one. `WhatsAppNotifier` design is now the project's active next stage (§7).
@@ -53,8 +53,7 @@ The committed `config.json` was **not** changed by these experiments —
 `providers.itaka.enabled` remains `false` there.
 
 **How to use this file:** read this first, then `AGENTS.md` (workflow rules) and
-`README.md` (architecture/quick start). No prior conversation history is needed —
-this file is written to be a complete, standalone handoff.
+`README.md` (architecture/quick start). This file is written to be a complete, standalone description of the project state.
 
 **If you are starting a new session right now:** ITAKA price completeness (§5),
 the scheduler's randomized-interval support (§6), and the first live ITAKA
@@ -76,7 +75,7 @@ decision to start a real continuous run. Plain `urllib`, robots-respecting,
 bounded requests. Parses Next.js RSC `__NEXT_DATA__` from public listing pages;
 confirms a booking price via one bounded detail-page fetch. **`price_is_complete`
 can already be `True` for ITAKA** once that detail-page confirmation succeeds —
-see §5 for the binding business-rule definition of price completeness and the
+see §5 for the business-rule definition of price completeness and the
 offline review that confirmed the existing code already implements it correctly,
 with no code changes required.
 
@@ -266,8 +265,8 @@ try/except already isolates them, matching ITAKA/TUI's own established fail-safe
 pattern) — worth a closer look only if it starts materially reducing offer
 coverage, not before.
 
-**Business follow-up, not yet investigated (2026-09-22).** The project owner's
-own manual search on Wakacje.pl's general search ("Dowolny kierunek lub hotel")
+**Business follow-up, not yet investigated (2026-09-22).** A manual
+search on Wakacje.pl's general search ("Dowolny kierunek lub hotel")
 found real offers below PLN 1500/person. The current provider is confirmed only
 against `/lastminute/` and the WRO-filtered variant of it — the current MVP's
 coverage may therefore be narrower than what the site's general/broad search
@@ -352,7 +351,7 @@ price missing mandatory fees). **Do not remove or work around this check to make
 alerts "start working"** for Rainbow, TUI or Wakacje.pl. The only correct fix for
 those three is the same one already done for ITAKA: prove that a specific set of
 conditions makes `price_is_complete=True` safe to set for that source, following
-the binding business-rule definition of price completeness in §5.
+the business-rule definition of price completeness in §5.
 
 **Decision (2026-09-22, after the live ITAKA experiments in §1):** three
 controlled live experiments (a first `--watch` dry run, a longer 3-cycle natural
@@ -360,7 +359,7 @@ dry run, and a `max_detail_requests=3` diagnostic — full results in §1) all
 produced 0 offers with `price_is_complete=True`, with the same fail-closed
 detail-verification gap (missing `rateType`/`transport`, plus one case of
 conflicting detail evidence for the same `rate_id`) recurring across candidates.
-Based on this, the project owner decided:
+Based on this, the decision was:
 - The project will **not** wait for a first real ITAKA alert before starting
   work on the notification channel.
 - ITAKA traffic will **not** be increased further for the purpose of forcing an
@@ -374,9 +373,9 @@ Based on this, the project owner decided:
   notification infrastructure, then a design for a minimal integration with the
   official Meta WhatsApp Business/Cloud API. No real messages are sent yet.
 
-## 5. Price-completeness business rule (binding) — ITAKA resolved 2026-09-22
+## 5. Price-completeness business rule (current policy) — ITAKA resolved 2026-09-22
 
-**Binding project policy, decided by the project owner 2026-09-22.** This is the
+**Project policy, decided 2026-09-22.** This is the
 project-wide definition of price completeness; it governs every provider, not just
 ITAKA:
 
@@ -437,14 +436,14 @@ one-time manual walkthrough of ITAKA's real checkout, up to but not including
 payment, to confirm no further mandatory operator fee appears only at that stage
 (something no public detail-page fixture captured so far could reveal). This is
 optional additional confirmation, not a prerequisite — the current
-`price_is_complete=True` behavior already matches the binding business rule above
+`price_is_complete=True` behavior already matches the business rule above
 without it. If ever done, it requires the same explicit-authorization,
 minimal-request discipline used throughout this project (see §9) — propose it,
 don't just do it.
 
 ## 6. Scheduler: randomized polling interval + ITAKA `--watch` unblocked (implemented 2026-09-22)
 
-**Binding scheduling decision from the project owner:** for a normal, successful
+**Scheduling decision:** for a normal, successful
 cycle the project wants a configurable **random** delay per provider, not a fixed
 interval plus a purely additive jitter. The project's main goal is catching
 short-lived last-minute deals quickly, so a perfectly periodic, hour-long cadence
@@ -642,7 +641,3 @@ live experiments or this documentation update.
 - `data/wakacje-recon/` — Wakacje.pl reconnaissance HTML/`__NEXT_DATA__` extracts
   from all three sessions (unfiltered listing, `?z-wroclawia` listing, and the
   bare detail-page fetch that was confirmed to carry no offer data).
-
-## Collaboration preference
-
-Communicate with the owner in Polish; keep code and documentation in English.

@@ -1,6 +1,6 @@
 # TUI provider — current state (2026-09-23)
 
-This is the canonical TUI handoff. (An earlier session's TUI notes live inside
+This is the canonical TUI state document. (Earlier TUI notes live inside
 `experiments/rainbow_playwright/CURRENT_STATE.md` for historical reasons; this
 file is the up-to-date one going forward.)
 
@@ -47,7 +47,7 @@ detail-page navigations to confirm real-time price/availability.
   "CHART"` **and** `offerTravelType == "BYPLANE"` (three independent fields,
   not inferred from price or airline name),
 - `priceDetails.priceGuaranteeFund` exactly equals the officially confirmed
-  rate `(TFG 15 + TFP 15) PLN/traveller × adults` (2026-09-2x, project owner,
+  rate `(TFG 15 + TFP 15) PLN/traveller × adults` (confirmed 2026-09-2x
   from TUI's own published terms + the TFG regulation). Any other value →
   rejected (possible rate change), not silently trusted.
 
@@ -101,6 +101,56 @@ Tests: `tests/test_tui_pagination.py` (pagesCount=1/3/10 × max_pages=1/3,
 new-offers-per-page, dedup, different-dated variants, timeout-keeps-earlier-
 pages, block/ambiguous/malformed-still-fails, missing-pagination-defaults-to-
 one-page, combined browser-navigation-budget, disabled rating not blocking).
+
+### Watchlist pagination (`watchlist_max_pages`)
+
+`fetch_watchlist_offers()` uses the same single combined query
+(`build_watchlist_search_path`, `amountRange` = widest watchlist cap x 2, never
+`filters["max_price"]`) and fetches page 1 plus pages 2..`min(pagesCount,
+watchlist_max_pages)`. `watchlist_max_pages` is independent of `max_pages`, 1..3,
+default 1 when absent, `2` in `config.json`. Results are price-ascending
+(`pagination.sorting == "price"`; page 1 -> 2 was monotone in the recorded
+data) with 20 offers per page.
+
+Live check 2026-09-30 (2 pages, 1 detail budget, `amountRange=#4600`):
+`pagesCount=34`, `totalResults=661`; page 1 spans 1132-1517 PLN/person, page 2
+1516-1597. Two pages therefore only widen coverage by ~80 PLN/person of the
+1500-2300 band; a hotel priced near its 2300 cap sits on a late page and is
+**not** reachable within the 3-page navigation budget for an unscoped query.
+
+### Destination-scoped watchlist query (confirmed live 2026-09-30)
+
+The destination picker on the search page sends one `c:<destinationCode>` token per
+destination (picking Egypt sent `c:HRG:c:RMF:c:MUH:c:SSH`; the POST body carries
+`destinationsCodes`). The code tree is in the `gs/initial` response (`REGION` filter:
+country -> destination codes). Offer records carry `hotelCode` and `destinationCode`;
+the hotelCode prefix is NOT always the destination code (e.g. `HER12345` -> `CHQ`,
+`VAR...` -> `BOJ`), so the code is never derived, only configured.
+
+Live result for `c:HRG`, the watchlist airports and `amountRange=#4600`: `totalResults=11`,
+`pagesCount=1`, prices 2029-2309 PLN/person (vs. 34 pages unscoped). Without the price cap
+the same destination has 97 offers / 5 pages. No hotel-level facet was found; the
+watchlist hotel was not among the 11 results (not offered within the cap at that time).
+
+Implementation: `HotelWatchlistEntry.provider_destinations["tui"]`;
+`tui_query.split_watchlist_entries` separates scoped entries from unscoped ones, because
+`c:` is a hard filter and one mixed query would hide the unscoped hotels.
+`fetch_watchlist_offers` runs one query per non-empty group (all scoped hotels share one,
+their destinations de-duplicated), page 1 each, with `watchlist_max_pages` bounding the
+listing navigations in total (extra pages go to the scoped group first). Entries without
+a destination keep the previous price-sorted behavior. Per-hotel price limits are still
+enforced by `watchlist.matches()`.
+
+Request cost per cycle (shared robots fetch cached for 300 s): previously robots + 2
+listing pages + 1 detail; now, scoped hotels only, robots + 1 listing page (+ more only if
+`pagesCount` > 1 and budget allows) + 1 detail, regardless of how many hotels share a
+destination (1, 5 or 10 hotels in one destination: still one query; hotels in N distinct
+destinations: one query, extra pages only if needed). Mixed scoped + unscoped: 2 listing
+queries within `watchlist_max_pages`.
+
+`robots.txt` is cached per provider instance for `ROBOTS_CACHE_TTL_SECONDS`
+(300 s, `wall_clock`), so `fetch()` and `fetch_watchlist_offers()` of one cycle
+share one request; failures are never cached.
 
 ## 4. Rating — MVP decision (no longer an open question)
 
@@ -221,7 +271,7 @@ and an unknown field under `providers.tui` rejected (existing closed-TypedDict
 behavior). All prior pagination/timeout/block/structural-error tests are
 unchanged and still pass, confirming those paths are untouched.
 
-## 7. Hard rules (robots / Playwright) — unchanged, still binding
+## 7. Hard rules (robots / Playwright) — unchanged, still in force
 
 - `robots.txt` fetched fresh every cycle; conservative union of all
   `Disallow` (any user agent), fail-closed on missing/malformed robots.
@@ -257,7 +307,7 @@ sequential scheduler, matching the same shape ITAKA/Rainbow/Wakacje.pl
 already have. The one thing worth a conscious decision before running TUI
 continuously (`--watch`, Docker/VPS) is operational, not technical:
 confirming the desired `interval_seconds`/`interval_min_seconds`/
-`interval_max_seconds` cadence and that the project owner is ready for TUI to
+`interval_max_seconds` cadence and a decision to let TUI
 make real, recurring Playwright requests against the live site (mirroring
 the same deliberate, separate decision already made for ITAKA). Local
 mandatory costs and the rating threshold (§4, §5) are explicitly accepted MVP

@@ -742,7 +742,7 @@ Per this session's scope, `wakacje.py` is **still not implemented** — the next
 session should design and write it against §9's revised architecture.
 
 ## 13. Session 4 (same day, 2026-09-22) — `wakacje.py` implemented, then a business
-problem surfaced: the project owner's own manual search on Wakacje.pl found real,
+problem surfaced: a manual search on Wakacje.pl found real,
 matching offers the shipped provider did not see. Six further controlled sessions
 (13-20 below) diagnosed and partially fixed this. Full narrative and current status:
 see `CURRENT_STATE.md` in this same directory, which is the authoritative,
@@ -835,8 +835,7 @@ not added.
 
 ## 14. Implementation session A (same day) — `price_is_complete` whitelist, `/wczasy/`, pagination
 
-Full design discussion and rationale: see the conversation this file's project
-tracks (not reproduced here). Summary of what shipped — current, authoritative
+Summary of what shipped — current, authoritative
 state is `CURRENT_STATE.md` §1:
 
 - `filters["accept_incomplete_price_from"]` (new `FilterConfig` field): a
@@ -874,8 +873,7 @@ what motivated the manual UI comparison in §16.
 
 ## 16. Manual UI comparison session — real offers the agent was missing
 
-Full walkthrough (screenshots) lives in the conversation this file's project
-tracks; findings reproduced here as durable evidence.
+Findings from the manual walkthrough are reproduced here as durable evidence.
 
 **Search flow used:** homepage -> "Jak i skąd?" modal -> departure-city
 selector -> "Cena" (Średnia za osobę, do 1500 zł) -> "Wyżywienie"
@@ -1145,7 +1143,7 @@ Current, authoritative state: `CURRENT_STATE.md` §1-§5.
 
 ## 24. Session (2026-09-24): sort+airport reconnaissance, offline then two bounded live GETs
 
-Narrow, bounded goal (project owner's explicit scope): does Wakacje.pl itself
+Narrow, bounded goal: does Wakacje.pl itself
 generate a legal, stable URL combining a confirmed departure-airport filter with
 cheapest-first sort -- the combination §13b/§0 left explicitly untested
 ("`?tanio,z-wroclawia`... Never found, never guessed, never fetched").
@@ -1158,8 +1156,7 @@ combining `z-lodzi` with any sort token. **Conclusion at that point: NOT
 confirmed** -- no site-generated combined URL was passively observable this way,
 and per this project's convention the combination was not guessed.
 
-**Second pass: real, human-driven browser evidence.** The project owner supplied
-a Playwright Codegen recording (headed browser, manual clicks, not automated
+**Second pass: real, human-driven browser evidence.** A Playwright Codegen recording was supplied (headed browser, manual clicks, not automated
 scraping) plus screenshots of a real search: departure cities Katowice + Łódź +
 Warszawa + Wrocław, board types (AI/HB/ZO/FB), 3+ stars, rating 8.0+, price cap
 1500 PLN "średnia za osobę" (per person), sort "Najtańszych". The resulting,
@@ -1223,7 +1220,7 @@ deliberately includes `za-osobe` ("average per person"), which flips this: the
 internal search request embedded in §24's live fetch shows `pricePerPerson:
 true, totalPrice: false` -- the reverse.
 
-**Confirmed directly, not inferred:** the project owner's own screenshot of the
+**Confirmed directly, not inferred:** a screenshot of the
 real page (same manual session that produced the confirmed URL) showed prices
 explicitly labeled "średnia za osobę" -- 1108, 1389, 1393, 1479, 1497, 1500 zł.
 The live-fetched offers' raw `price` field matched these to within ordinary live
@@ -1310,7 +1307,7 @@ persisted data. **Notifications:** 8 new `notifications` rows, all kind
 real Telegram messages sent and accepted by the Telegram API.
 
 **Real examples confirmed present among the 8 matches** (business-relevant,
-matching what the project owner found manually): Meridian (Bulgaria) at 1389
+matching what was found manually): Meridian (Bulgaria) at 1389
 PLN/os. (KTW) and 1393 PLN/os. (WAW); Alion (Albania) at 1479 PLN/os. (WAW);
 Pebbles Resort (Malta) at 1497 PLN/os. (WMI). Not present this specific run:
 Costa Malaga (~1108 PLN/os., real-time inventory turnover — the site's own
@@ -1347,6 +1344,69 @@ investigated further, not a blocker for this run's own conclusions.
 
 No further live requests were made while writing up this section. No
 code/config change, no commit/push.
+
+## 28. Investigated (2026-09-29): Telegram price vs. real checkout price mismatch — root cause is source-side listing volatility, not a parser/formula bug
+
+Two real Telegram alerts were reported whose price did not
+match the price shown after opening the same offer on the live site: "Sol de
+Alcudia Apartments a10" (Telegram: 1480 PLN/os., 2960 PLN/2 os.; site: 5918 PLN
+total) and "Fagus by Aycon" (Telegram: 1440 PLN/os., 2880 PLN/2 os.; site: 8958
+PLN total). Neither hotel is in `hotel_watchlist.json` — both came from the
+standard `fetch()` combined-query path (`za-osobe`, per-person view), not
+`fetch_watchlist_offers()`.
+
+**Local evidence first (`data/offers.sqlite3`, read-only):** both hotels were
+observed **three times within ~4 hours** on 2026-09-29 (12:03, 13:03, 14:04
+UTC), each time as a **different `departure_date`** for the very same hotel
+(Sol de Alcudia: 04-10 → 04-08 → 04-15; Fagus: 10-17 → 10-11 → 10-13/9 nights),
+each rising in price (Sol de Alcudia: 1440 → 1445 → 1480 PLN/os.; Fagus: 1300 →
+1390 → 1440 PLN/os.). Because `variant_identity` includes `departure_date`
+(deliberate, see §12.1/§8b), each hourly scan produced a *new*
+`variant_identity` → a new `new_offer` alert, even though it is commercially
+the same hotel deal drifting. The two reported examples are
+exactly the most recent (14:04 UTC) row for each hotel. No corrupted/duplicate
+data: each row is a distinct, correctly-identified variant: nothing to clean
+up.
+
+**Bounded live check (3 requests: robots.txt + the confirmed combined query
+with `za-osobe` + the same query without it, i.e. the site's own total-price
+default view):** both hotels were still present, live, as of this check.
+Matching the exact same `id`/`departureDate`/`duration`/`service` record
+across both requests, `price_per_person * 2` equalled the total-view `price`
+for all 10 common offers, to within 1 PLN (pure rounding) — including both
+target hotels:
+
+| Hotel | per-person (za-osobe) | × 2 | total-view `price` |
+|---|---|---|---|
+| Sol de Alcudia Apartments a10 (id 1197633, now dated 2027-04-01) | 1485 | 2970 | 2969 |
+| Fagus by Aycon (id 1051986, now dated 2026-10-15/9 nights) | 1470 | 2940 | 2939 |
+
+This is the same **exact** formula `wakacje_data.normalize_offer` already
+uses. **No double-division, no formula bug.** The real per-offer href
+(`extract_offer_links`) also correctly encoded the live variant's exact date/
+duration/board/departure-airport for both hotels, matching the DB-stored `url`
+exactly in shape — no stale/bare fallback URL involved.
+
+**Conclusion (A vs. B vs. C from the investigation brief): neither A (bad
+parser price) nor B (URL opens a different variant) in the sense of a code
+defect — both C-adjacent but external: (1) this source's own "cheapest,
+sorted" search-result index is unstable, rotating to a different date/price
+for the same hotel within about an hour (a pattern already noted in §27 as
+"real-time inventory turnover... an already-established pattern in this
+project" — today's finding is the same phenomenon, now precisely quantified:
+minutes-to-an-hour timescale, not just "run to run"); (2) this project has no
+robots-compliant way to fetch Wakacje.pl's live per-operator checkout total to
+confirm a listing price before it is sent (`price_is_complete` stays `False`
+structurally, §12.2/§12.4) — the ~2x/~3x gap seen when
+opening the offer is consistent with the site's own listing price being a
+periodically-recomputed "teaser" figure that can already be stale relative to
+the live operator quote by the time it is opened, not with anything this
+project's parser miscomputed. This was not independently reproduced end-to-end
+(fetching the real checkout total ourselves is structurally impossible here,
+same as every prior session's conclusion) — reported as the most parsimonious
+explanation supported by precise, reproducible evidence, not as a guess.
+
+No code/config change in this investigation; regression tests were added.
 
 Current, authoritative state: `CURRENT_STATE.md` (updated alongside this
 section).
